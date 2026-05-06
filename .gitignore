@@ -1,0 +1,70 @@
+# .NET / Visual Studio
+[Bb]in/
+[Oo]bj/
+[Oo]ut/
+[Ll]og/
+[Ll]ogs/
+*.user
+*.userosscache
+*.suo
+*.sln.docstates
+.vs/
+.idea/
+*.binlog
+TestResults/
+
+# .NET / NuGet artifacts
+project.lock.json
+project.fragment.lock.json
+artifacts/
+*.nupkg
+*.snupkg
+
+# Web
+node_modules/
+dist/
+build/
+.next/
+.turbo/
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# ============================================================
+# Secrets / 로컬 환경 (NEVER COMMIT)
+# ============================================================
+# 환경 파일
+.env
+.env.local
+.env.*.local
+
+# ASP.NET Core 로컬 override (User Secrets 외 추가 override 용)
+appsettings.Local.json
+appsettings.*.Local.json
+appsettings.Development.json.local
+appsettings.*.local
+
+# 일반 secret 패턴
+*.local.json
+*.local.env
+secrets/
+secrets.local.*
+*.Secrets.cs
+
+# YhLibrary 위치 등 사용자별 MSBuild override
+Directory.Build.props.user
+Directory.Build.targets.user
+
+# ============================================================
+# 데이터 / CSV (raw 데이터는 commit 금지)
+# ============================================================
+data/
+*.csv
+!docs/**/*.csv

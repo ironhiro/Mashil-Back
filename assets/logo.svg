@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="마실 로고">
+  <!--
+    Mashil logo — stylized "ㅁ" frame as a doorway, with a small amber dot
+    representing "잠깐 들렀다 가는 점" (a brief stop). 64x64 base, scales clean.
+  -->
+  <rect width="64" height="64" rx="14" fill="#2D6A4F"/>
+  <path
+    d="M18 20 H46 V44 H18 Z"
+    fill="none"
+    stroke="#F8F9FA"
+    stroke-width="3.5"
+    stroke-linejoin="round"/>
+  <circle cx="46" cy="20" r="5" fill="#FFB703"/>
+</svg>

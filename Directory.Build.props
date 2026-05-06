@@ -1,0 +1,26 @@
+<Project>
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <!--
+    YhLibrary(https://github.com/<owner>/YhLibrary) 소스 위치.
+    기본값은 Mashil 저장소와 sibling 으로 클론한 경우 (../MyLibrary).
+    다른 위치에 둘 경우 환경 변수 YHLIBRARY_ROOT 로 override:
+        Windows  : setx YHLIBRARY_ROOT "D:\path\to\YhLibrary"
+        bash/zsh : export YHLIBRARY_ROOT="/path/to/YhLibrary"
+    또는 솔루션 루트에 Directory.Build.props.user 를 만들고 PropertyGroup 으로 지정.
+  -->
+  <PropertyGroup>
+    <YhLibraryRoot Condition="'$(YhLibraryRoot)' == '' AND '$(YHLIBRARY_ROOT)' != ''">$(YHLIBRARY_ROOT)</YhLibraryRoot>
+    <YhLibraryRoot Condition="'$(YhLibraryRoot)' == ''">$(MSBuildThisFileDirectory)..\MyLibrary</YhLibraryRoot>
+  </PropertyGroup>
+
+  <Import Project="$(MSBuildThisFileDirectory)Directory.Build.props.user" Condition="Exists('$(MSBuildThisFileDirectory)Directory.Build.props.user')" />
+
+</Project>
