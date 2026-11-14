@@ -1,12 +1,11 @@
 using System.Globalization;
-using Mashil.Api.External;
 using Mashil.Domain;
 using Mashil.Infrastructure;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using NetTopologySuite.Geometries;
 
-namespace Mashil.Api.Background;
+namespace Mashil.Worker.Geocoding;
 
 /// <summary>
 /// 두 큐를 한 워커에서 처리:

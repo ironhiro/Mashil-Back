@@ -4,8 +4,10 @@
     <Project Path="src/Mashil.Domain/Mashil.Domain.csproj" />
     <Project Path="src/Mashil.Import/Mashil.Import.csproj" />
     <Project Path="src/Mashil.Infrastructure/Mashil.Infrastructure.csproj" />
+    <Project Path="src/Mashil.Worker/Mashil.Worker.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/Mashil.Import.IntegrationTests/Mashil.Import.IntegrationTests.csproj" />
     <Project Path="tests/Mashil.Import.Tests/Mashil.Import.Tests.csproj" />
   </Folder>
   <Folder Name="/tools/">

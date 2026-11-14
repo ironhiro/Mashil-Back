@@ -1,7 +1,7 @@
 using System.Text.Json.Serialization;
 using YhLibrary.Http;
 
-namespace Mashil.Api.External;
+namespace Mashil.Worker.Geocoding;
 
 /// <summary>
 /// Kakao Local API (https://dapi.kakao.com) 의 주소↔좌표 변환만 담당하는 얇은 typed wrapper.

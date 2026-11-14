@@ -1,9 +1,6 @@
-using System.Net.Http.Headers;
 using System.Text;
 using Mashil.Api.Auth;
-using Mashil.Api.Background;
 using Mashil.Api.Endpoints;
-using Mashil.Api.External;
 using Mashil.Domain;
 using Mashil.Infrastructure;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
@@ -67,23 +64,7 @@ try
         opt.AddPolicy("Admin", p => p.RequireRole(UserRole.Admin.ToString()));
     });
 
-    // --- YhLibrary HTTP client (Kakao Local API geocoding 등) ---
-    builder.Services.AddSingleton<YhLibrary.Serialization.ISerializer, YhLibrary.Serialization.JsonSerializer>();
-    builder.Services.AddHttpClient<YhLibrary.Http.ApiClient>((sp, c) =>
-    {
-        c.BaseAddress = new Uri("https://dapi.kakao.com");
-        var key = sp.GetRequiredService<IConfiguration>()["Kakao:RestApiKey"];
-        if (!string.IsNullOrWhiteSpace(key))
-        {
-            // Kakao 는 'Authorization: KakaoAK <key>' 형식 — Bearer 가 아님.
-            c.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("KakaoAK", key);
-        }
-    });
-    builder.Services.AddScoped<KakaoLocalClient>();
-
-    // --- Geocode 백그라운드 워커 ---
-    builder.Services.Configure<GeocodeWorkerOptions>(builder.Configuration.GetSection("Geocode"));
-    builder.Services.AddHostedService<GeocodeWorker>();
+    // 지오코딩·일일 임포트는 Mashil.Worker 가 실행한다 (OPS-01). API 배포가 백그라운드 작업을 끊지 않도록 분리.
 
     // --- CORS (dev) ---
     builder.Services.AddCors(o => o.AddDefaultPolicy(p => p

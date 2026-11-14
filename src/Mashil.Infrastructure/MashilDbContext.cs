@@ -111,6 +111,8 @@ public sealed class MashilDbContext(DbContextOptions<MashilDbContext> options) :
             e.Property(r => r.FileSha256).HasMaxLength(64);
             e.HasOne(r => r.Source).WithMany().HasForeignKey(r => r.SourceId).OnDelete(DeleteBehavior.Restrict);
             e.HasIndex(r => new { r.SourceId, r.Status, r.StartedAt });
+            // 소스당 Running 은 1건 (advisory lock 의 보조 안전장치)
+            e.HasIndex(r => r.SourceId).IsUnique().HasFilter("\"Status\" = 'Running'").HasDatabaseName("UX_import_runs_SourceId_Running");
         });
 
         b.Entity<RawToiletRecord>(e =>

@@ -210,9 +210,21 @@ namespace Mashil.Infrastructure.Migrations
                     b.Property<string>("Message")
                         .HasColumnType("text");
 
+                    b.Property<int>("MissingRows")
+                        .HasColumnType("integer");
+
                     b.Property<string>("NormalizerVersion")
                         .IsRequired()
                         .HasColumnType("text");
+
+                    b.Property<int>("RemovalCandidates")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("RemovedRows")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("RestoredRows")
+                        .HasColumnType("integer");
 
                     b.Property<int>("SkippedRows")
                         .HasColumnType("integer");
@@ -241,6 +253,11 @@ namespace Mashil.Infrastructure.Migrations
                         .HasColumnType("integer");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("SourceId")
+                        .IsUnique()
+                        .HasDatabaseName("UX_import_runs_SourceId_Running")
+                        .HasFilter("\"Status\" = 'Running'");
 
                     b.HasIndex("SourceId", "Status", "StartedAt");
 

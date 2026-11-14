@@ -1,4 +1,4 @@
-namespace Mashil.Api.Background;
+namespace Mashil.Worker.Geocoding;
 
 public sealed class GeocodeWorkerOptions
 {

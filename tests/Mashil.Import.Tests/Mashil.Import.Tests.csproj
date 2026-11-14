@@ -6,6 +6,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Mashil.Import\Mashil.Import.csproj" />
+    <ProjectReference Include="..\..\src\Mashil.Worker\Mashil.Worker.csproj" />
   </ItemGroup>
 
   <ItemGroup>
