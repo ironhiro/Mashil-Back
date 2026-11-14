@@ -2,6 +2,7 @@
 using Mashil.Import;
 using Mashil.Import.LocalData;
 using Mashil.Infrastructure;
+using Mashil.Infrastructure.Identity;
 using Mashil.Worker;
 using Mashil.Worker.Geocoding;
 using Mashil.Import.Geocoding;
@@ -11,6 +12,7 @@ using Microsoft.Extensions.Options;
 // Mashil.Worker — API 와 분리된 백그라운드 작업 호스트 (OPS-01)
 //   1. 일일 공중화장실 데이터 갱신 (DailyImportScheduler → DailyImportJob)
 //   2. 주소 → 좌표 지오코딩 (GeocodeWorker)
+//   3. 탈퇴 사용자 IdP 연결 해제 재시도 (IdpRevocationWorker)
 // API 를 배포해도 이 작업들은 끊기지 않는다. 단일 인스턴스로 운영한다 (임포트는 advisory lock 으로도 보호).
 
 var builder = Host.CreateApplicationBuilder(args);
@@ -60,6 +62,10 @@ if (!string.IsNullOrWhiteSpace(kakaoKey))
     });
 }
 builder.Services.AddHostedService<GeocodeWorker>();
+
+// --- 탈퇴 IdP 연결 해제 재시도 — OAuth:Kakao:AdminKey, OAuth:Apple:* 를 API 와 같은 값으로 ---
+builder.Services.AddMashilIdentity(builder.Configuration);
+builder.Services.AddHostedService<IdpRevocationWorker>();
 
 var host = builder.Build();
 

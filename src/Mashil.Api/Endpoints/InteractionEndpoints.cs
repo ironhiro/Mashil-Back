@@ -41,6 +41,7 @@ public static class InteractionEndpoints
             return Results.NoContent();
         })
         .RequireAuthorization()
+        .RequireConsent()
         .WithSummary("화장실 별점 등록/갱신 (인증 필요)")
         .WithDescription("(user, toilet) 유니크 — 같은 사용자가 같은 화장실에 다시 POST 하면 기존 점수 갱신. `score` 1~5 범위 외면 400.")
         .Produces(StatusCodes.Status204NoContent)
@@ -49,18 +50,26 @@ public static class InteractionEndpoints
 
         var comments = app.MapGroup("/api/toilets/{toiletId:long}/comments").WithTags("Comments");
 
-        comments.MapGet("", async (long toiletId, MashilDbContext db, CancellationToken ct) =>
+        comments.MapGet("", async (long toiletId, ClaimsPrincipal principal, MashilDbContext db, CancellationToken ct) =>
         {
-            var list = await db.Comments
-                .Where(c => c.ToiletId == toiletId && !c.Hidden)
+            var viewer = principal.TryGetUserId();
+            var q = db.Comments.Where(c => c.ToiletId == toiletId && !c.Hidden);
+            if (viewer is { } v)
+                q = q.Where(c => !db.UserBlocks.Any(b => b.BlockerId == v && b.BlockedId == c.UserId));
+            var rows = await q
                 .OrderByDescending(c => c.CreatedAt)
                 .Take(100)
+                .Join(db.UserProfiles, c => c.UserId, u => u.Id, (c, u) => new { c, u.DisplayName, u.Status })
                 .ToListAsync(ct);
-            return Results.Ok(list);
+            return Results.Ok(rows
+                .OrderByDescending(r => r.c.CreatedAt)
+                .Select(r => new CommentView(r.c.Id, r.c.ToiletId, r.c.UserId,
+                    CommentAuthor.Name(r.DisplayName, r.Status), r.Status == UserStatus.Deleted,
+                    r.c.Text, r.c.Hidden, r.c.CreatedAt, r.c.UpdatedAt, viewer == r.c.UserId)));
         })
         .WithSummary("화장실 댓글 목록 (공개)")
-        .WithDescription("`Hidden = true` (관리자 숨김) 행은 제외, 최신순 100건. 인증 불필요.")
-        .Produces<IReadOnlyList<Comment>>();
+        .WithDescription("숨김 댓글 제외, 최신순 100건. 토큰을 보내면 내가 차단한 사용자의 댓글도 빠진다 (UGC-02). 탈퇴한 작성자는 `authorName = \"탈퇴한 사용자\"`.")
+        .Produces<IReadOnlyList<CommentView>>();
 
         comments.MapPost("", async (
             long toiletId,
@@ -72,6 +81,8 @@ public static class InteractionEndpoints
             var userId = principal.GetUserIdOrThrow();
             if (string.IsNullOrWhiteSpace(input.Text))
                 return Results.BadRequest(new { error = "text required" });
+            if (input.Text.Trim().Length > MaxCommentLength)
+                return Results.BadRequest(new { error = $"text too long (max {MaxCommentLength})" });
 
             var c = new Comment { UserId = userId, ToiletId = toiletId, Text = input.Text.Trim() };
             db.Comments.Add(c);
@@ -79,6 +90,7 @@ public static class InteractionEndpoints
             return Results.Created($"/api/toilets/{toiletId}/comments/{c.Id}", c);
         })
         .RequireAuthorization()
+        .RequireConsent()
         .WithSummary("댓글 작성 (인증 필요)")
         .WithDescription("빈 문자열/공백만이면 400. 작성자 ID 는 JWT 에서 추출 — 페이로드로 받지 않음.")
         .Produces<Comment>(StatusCodes.Status201Created)
@@ -106,6 +118,7 @@ public static class InteractionEndpoints
             return Results.Created($"/api/change-requests/{cr.Id}", cr);
         })
         .RequireAuthorization()
+        .RequireConsent()
         .WithSummary("변경 요청 제출 (인증 필요)")
         .WithDescription("화장실 추가/수정/삭제 요청을 큐에 적재. 즉시 반영 안 됨 — 관리자 승인 후 별도 서비스가 적용. 상태는 항상 `Pending` 으로 시작.")
         .Produces<ChangeRequest>(StatusCodes.Status201Created)
@@ -179,6 +192,13 @@ public static class InteractionEndpoints
         .Produces(StatusCodes.Status403Forbidden)
         .Produces(StatusCodes.Status404NotFound);
     }
+
+    public const int MaxCommentLength = 1000;
+
+    /// <summary>댓글 목록 행. `authorDeleted` 면 작성자가 탈퇴함. `isMine` 은 토큰을 보냈을 때만 의미 있음.</summary>
+    public sealed record CommentView(
+        long Id, long ToiletId, Guid UserId, string AuthorName, bool AuthorDeleted,
+        string Text, bool Hidden, DateTime CreatedAt, DateTime UpdatedAt, bool IsMine);
 
     /// <summary>별점 페이로드.</summary>
     /// <param name="Score">1~5 정수.</param>

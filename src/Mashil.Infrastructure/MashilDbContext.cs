@@ -25,6 +25,15 @@ public sealed class MashilDbContext(DbContextOptions<MashilDbContext> options) :
     public DbSet<GeocodeDailyUsage> GeocodeDailyUsage => Set<GeocodeDailyUsage>();
     public DbSet<PublicHoliday> PublicHolidays => Set<PublicHoliday>();
 
+    // --- 인증·스토어 필수 기능 (P4) ---
+    public DbSet<UserIdentity> UserIdentities => Set<UserIdentity>();
+    public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
+    public DbSet<AuthNonce> AuthNonces => Set<AuthNonce>();
+    public DbSet<UserConsent> UserConsents => Set<UserConsent>();
+    public DbSet<IdpRevocation> IdpRevocations => Set<IdpRevocation>();
+    public DbSet<CommentReport> CommentReports => Set<CommentReport>();
+    public DbSet<UserBlock> UserBlocks => Set<UserBlock>();
+
     protected override void OnModelCreating(ModelBuilder b)
     {
         b.HasPostgresExtension("postgis");
@@ -111,9 +120,91 @@ public sealed class MashilDbContext(DbContextOptions<MashilDbContext> options) :
         {
             e.ToTable("user_profiles");
             e.HasKey(u => u.Id);
-            e.Property(u => u.Email).HasMaxLength(256).IsRequired();
-            e.HasIndex(u => u.Email).IsUnique();
+            // 이메일은 선택·비식별 (USR-01) — 유니크 없음
+            e.Property(u => u.Email).HasMaxLength(256);
+            e.HasIndex(u => u.Email);
+            e.Property(u => u.DisplayName).HasMaxLength(40);
             e.Property(u => u.Role).HasConversion<string>();
+            e.Property(u => u.Status).HasConversion<string>().HasMaxLength(16);
+        });
+
+        b.Entity<UserIdentity>(e =>
+        {
+            e.ToTable("user_identities");
+            e.HasKey(i => i.Id);
+            e.Property(i => i.Provider).HasConversion<string>().HasMaxLength(16);
+            e.Property(i => i.ProviderSubject).HasMaxLength(255);
+            e.Property(i => i.ClientId).HasMaxLength(255);
+            e.Property(i => i.EmailAtProvider).HasMaxLength(320);
+            e.HasIndex(i => new { i.Provider, i.ProviderSubject }).IsUnique();
+            e.HasIndex(i => i.UserId);
+            e.HasOne<UserProfile>().WithMany().HasForeignKey(i => i.UserId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        b.Entity<RefreshToken>(e =>
+        {
+            e.ToTable("refresh_tokens");
+            e.HasKey(t => t.Id);
+            e.Property(t => t.TokenHash).HasMaxLength(64);
+            e.Property(t => t.FamilyId).HasMaxLength(32);
+            e.Property(t => t.DeviceLabel).HasMaxLength(16);
+            e.HasIndex(t => t.TokenHash).IsUnique();
+            e.HasIndex(t => t.FamilyId);
+            e.HasIndex(t => t.UserId).HasFilter("\"RevokedAt\" IS NULL");
+            e.HasOne<UserProfile>().WithMany().HasForeignKey(t => t.UserId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        b.Entity<AuthNonce>(e =>
+        {
+            e.ToTable("auth_nonces");
+            e.HasKey(n => n.Id);
+            e.Property(n => n.NonceHash).HasMaxLength(64);
+            e.HasIndex(n => n.NonceHash).IsUnique();
+            e.HasIndex(n => n.ExpiresAt);
+        });
+
+        b.Entity<UserConsent>(e =>
+        {
+            e.ToTable("user_consents");
+            e.HasKey(c => c.Id);
+            e.Property(c => c.DocType).HasConversion<string>().HasMaxLength(16);
+            e.Property(c => c.DocVersion).HasMaxLength(32);
+            e.HasIndex(c => new { c.UserId, c.DocType, c.DocVersion }).IsUnique();
+            e.HasOne<UserProfile>().WithMany().HasForeignKey(c => c.UserId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        b.Entity<IdpRevocation>(e =>
+        {
+            e.ToTable("idp_revocations");
+            e.HasKey(r => r.Id);
+            e.Property(r => r.Provider).HasConversion<string>().HasMaxLength(16);
+            e.Property(r => r.Status).HasConversion<string>().HasMaxLength(16);
+            e.Property(r => r.ProviderSubject).HasMaxLength(255);
+            e.Property(r => r.ClientId).HasMaxLength(255);
+            e.HasIndex(r => new { r.Status, r.NextAttemptAt });
+        });
+
+        b.Entity<CommentReport>(e =>
+        {
+            e.ToTable("comment_reports");
+            e.HasKey(r => r.Id);
+            e.Property(r => r.Reason).HasConversion<string>().HasMaxLength(16);
+            e.Property(r => r.Status).HasConversion<string>().HasMaxLength(16);
+            e.Property(r => r.Detail).HasMaxLength(500);
+            e.HasIndex(r => new { r.CommentId, r.ReporterId }).IsUnique();
+            e.HasIndex(r => r.Status);
+            e.HasOne<Comment>().WithMany().HasForeignKey(r => r.CommentId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne<UserProfile>().WithMany().HasForeignKey(r => r.ReporterId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne<UserProfile>().WithMany().HasForeignKey(r => r.ReviewedById).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        b.Entity<UserBlock>(e =>
+        {
+            e.ToTable("user_blocks", t => t.HasCheckConstraint("CK_user_blocks_not_self", "\"BlockerId\" <> \"BlockedId\""));
+            e.HasKey(x => new { x.BlockerId, x.BlockedId });
+            e.HasIndex(x => x.BlockedId);
+            e.HasOne<UserProfile>().WithMany().HasForeignKey(x => x.BlockerId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne<UserProfile>().WithMany().HasForeignKey(x => x.BlockedId).OnDelete(DeleteBehavior.Restrict);
         });
 
         // FK 는 모두 Restrict — 사용자·화장실은 soft delete (status) 로만 지운다 (G5).
