@@ -64,6 +64,13 @@ try
         opt.AddPolicy("Admin", p => p.RequireRole(UserRole.Admin.ToString()));
     });
 
+    // --- JSON: enum 은 문자열로 주고받는다 (웹이 "Pending", "Update" 같은 문자열을 씀) ---
+    builder.Services.ConfigureHttpJsonOptions(o =>
+    {
+        o.SerializerOptions.Converters.Add(new Mashil.Api.ChangeRequestKindJsonConverter()); // "Update" → Edit (G3)
+        o.SerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter());
+    });
+
     // 지오코딩·일일 임포트는 Mashil.Worker 가 실행한다 (OPS-01). API 배포가 백그라운드 작업을 끊지 않도록 분리.
 
     // --- CORS (dev) ---

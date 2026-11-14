@@ -23,6 +23,7 @@ public sealed class MashilDbContext(DbContextOptions<MashilDbContext> options) :
     public DbSet<ValueMapping> ValueMappings => Set<ValueMapping>();
     public DbSet<GeocodeCacheEntry> GeocodeCache => Set<GeocodeCacheEntry>();
     public DbSet<GeocodeDailyUsage> GeocodeDailyUsage => Set<GeocodeDailyUsage>();
+    public DbSet<PublicHoliday> PublicHolidays => Set<PublicHoliday>();
 
     protected override void OnModelCreating(ModelBuilder b)
     {
@@ -81,6 +82,13 @@ public sealed class MashilDbContext(DbContextOptions<MashilDbContext> options) :
             e.HasKey(c => c.QueryKey);
             e.Property(c => c.QueryKey).HasMaxLength(256);
             e.Property(c => c.Status).HasConversion<string>().HasMaxLength(16);
+        });
+
+        b.Entity<PublicHoliday>(e =>
+        {
+            e.ToTable("public_holidays");
+            e.HasKey(h => h.Date);
+            e.Property(h => h.Name).HasMaxLength(64);
         });
 
         b.Entity<GeocodeDailyUsage>(e =>

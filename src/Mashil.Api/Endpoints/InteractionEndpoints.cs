@@ -134,18 +134,46 @@ public static class InteractionEndpoints
             MashilDbContext db,
             CancellationToken ct) =>
         {
-            var cr = await db.ChangeRequests.FindAsync([id], ct);
+            await using var tx = await db.Database.BeginTransactionAsync(ct);
+            var cr = await db.ChangeRequests
+                .FromSqlInterpolated($"SELECT * FROM change_requests WHERE \"Id\" = {id} FOR UPDATE")
+                .SingleOrDefaultAsync(ct);
             if (cr is null) return Results.NotFound();
+            if (cr.Status != ChangeRequestStatus.Pending)
+                return Results.Conflict(new { message = $"이미 처리된 요청입니다 ({cr.Status})" });
+
+            var adminId = principal.GetUserIdOrThrow();
+            var now = DateTime.UtcNow;
+            Mashil.Import.ChangeRequestApplier.Result? applied = null;
+            if (review.Approve)
+            {
+                try
+                {
+                    applied = await Mashil.Import.ChangeRequestApplier.ApplyAsync(db, cr, adminId, now, ct);
+                }
+                catch (Exception ex) when (ex is InvalidOperationException or System.Text.Json.JsonException)
+                {
+                    return Results.UnprocessableEntity(new { message = "요청 내용을 반영할 수 없습니다: " + ex.Message });
+                }
+            }
+
             cr.Status = review.Approve ? ChangeRequestStatus.Approved : ChangeRequestStatus.Rejected;
-            cr.ReviewedAt = DateTime.UtcNow;
-            cr.ReviewedById = principal.GetUserIdOrThrow();
+            cr.ReviewedAt = now;
+            cr.ReviewedById = adminId;
             cr.ReviewNote = review.Note;
             await db.SaveChangesAsync(ct);
-            // TODO: when Approved, apply the payload to the target Toilet in a follow-up service.
-            return Results.NoContent();
+            await tx.CommitAsync(ct);
+            return applied is null ? Results.NoContent() : Results.Ok(applied);
         })
         .WithSummary("변경 요청 승인/반려 (관리자)")
-        .WithDescription("`approve = true` → `Approved`, `false` → `Rejected`. 승인된 요청의 실제 Toilet 반영은 후속 서비스 (현재는 상태만 변경). 같은 요청에 다시 PATCH 하면 마지막 결정으로 덮어씀.")
+        .WithDescription("""
+            `approve = true` → 같은 트랜잭션에서 화장실에 반영하고 `Approved` (반영 결과 200), `false` → `Rejected` (204).
+            반영은 원본을 직접 고치지 않고 오버라이드(source = ChangeRequest)로 남기므로 재임포트해도 유지된다.
+            이미 처리된 요청은 409. 반영할 수 없는 내용(대상 없음, 이름 없는 추가 요청)은 422.
+            """)
+        .Produces<Mashil.Import.ChangeRequestApplier.Result>()
+        .Produces(StatusCodes.Status409Conflict)
+        .Produces(StatusCodes.Status422UnprocessableEntity)
         .Produces(StatusCodes.Status204NoContent)
         .Produces(StatusCodes.Status401Unauthorized)
         .Produces(StatusCodes.Status403Forbidden)

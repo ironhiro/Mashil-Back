@@ -412,6 +412,21 @@ namespace Mashil.Infrastructure.Migrations
                         });
                 });
 
+            modelBuilder.Entity("Mashil.Domain.PublicHoliday", b =>
+                {
+                    b.Property<DateOnly>("Date")
+                        .HasColumnType("date");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.HasKey("Date");
+
+                    b.ToTable("public_holidays", (string)null);
+                });
+
             modelBuilder.Entity("Mashil.Domain.Rating", b =>
                 {
                     b.Property<long>("Id")
