@@ -1,0 +1,44 @@
+# API 리버스 프록시 (자동 TLS). 웹 정적 파일은 CDN·오브젝트 스토리지가 서빙한다 (08-infrastructure.md).
+{$MASHIL_DOMAIN} {
+	encode zstd gzip
+
+	# 위치 쿼리(lat/lng)는 접근 로그에 남기지 않는다 (NFR-06)
+	log {
+		output stdout
+		format filter {
+			wrap json
+			fields {
+				request>uri query {
+					delete lat
+					delete lng
+					delete north
+					delete south
+					delete east
+					delete west
+				}
+				request>headers>Authorization delete
+				request>headers>Cookie delete
+			}
+		}
+	}
+
+	handle /api/* {
+		reverse_proxy api-blue:8080 api-green:8080 {
+			lb_policy round_robin
+			lb_try_duration 10s          # 한쪽 교체 중이면 다른 쪽으로 재시도
+			health_uri /healthz/ready
+			health_interval 5s
+			health_timeout 3s
+		}
+	}
+
+	handle /healthz* {
+		reverse_proxy api-blue:8080 api-green:8080 {
+			health_uri /healthz/ready
+		}
+	}
+
+	handle {
+		respond "Not Found" 404
+	}
+}

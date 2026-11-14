@@ -4,12 +4,12 @@
 > 한국 공중·개방 화장실 데이터 기반 길찾기/평점/댓글 사이드 프로젝트의 백엔드.
 
 ```
-ASP.NET Core 10 (Minimal API)  +  EF Core 10 + PostGIS
-                ↑
-                │ ProjectReference
-                │
-        YhLibrary.Http / YhLibrary.Serialization
+ASP.NET Core 10 (Minimal API) + Worker  +  EF Core 10 + PostGIS
 ```
+
+> 2026-11-14: YhLibrary 의존을 제거했다. Kakao 클라이언트가 `Mashil.Import` 로 옮겨가서
+> 이 저장소만으로 빌드된다 (Docker 빌드 컨텍스트 단순화, MessagePack 취약점 경고 제거).
+> 아래 "사전 준비"의 YhLibrary 설정은 더 이상 필요 없다.
 
 프런트는 [Mashil-Front](https://github.com/) (Vite + React 19 + TS + MUI 6 + Kakao Maps).
 이 백엔드는 dev 시 vite proxy 가 `/api → :5099` 로 연결.
@@ -122,6 +122,36 @@ dotnet test
 6. 결과 알림 — 로그 + `Alerts:WebhookUrl`(Slack/Discord) 이 있으면 웹훅. 마지막 정상 갱신이 48시간을 넘으면 경고
 
 설정은 `src/Mashil.Worker/appsettings.json` 의 `Import:*`, `Alerts:*`, `Geocode:*`.
+
+### 정규화·지오코딩 도구 (CsvImport CLI)
+
+```bash
+dotnet run --project tools/Mashil.CsvImport -- "<CSV>" --hours-report      # 개방시간 파서 커버리지 (DB 없음)
+dotnet run --project tools/Mashil.CsvImport -- --renormalize                # 저장된 원본으로 재정규화 (--only-outdated)
+dotnet run --project tools/Mashil.CsvImport -- --adopt-coordinates          # 기존 좌표를 오버라이드로 (1회)
+dotnet run --project tools/Mashil.CsvImport -- --geocode=200                # 지오코딩 N건 (user-secrets 의 Kakao 키)
+```
+
+## 컨테이너 / 운영 배포
+
+설계는 `Mashil-app/docs/08-infrastructure.md`. 파일:
+
+| 파일 | 내용 |
+|---|---|
+| `Dockerfile` | 타깃 `api` / `worker` / `migrate`(EF 마이그레이션 번들) |
+| `deploy/docker-compose.prod.yml` | Caddy(443) → api-blue·api-green, worker, postgres(내부 전용), `ops` 프로필: migrate·backup |
+| `deploy/Caddyfile` | 자동 TLS, `/healthz/ready` 헬스체크 업스트림, 접근 로그에서 위치 쿼리 제거 (NFR-06) |
+| `deploy/deploy.sh` | 무중단 배포: 마이그레이션 → api-blue → api-green 한쪽씩 → worker → 스모크 |
+| `deploy/.env.example` | 운영 환경 변수 템플릿 (`/etc/mashil/mashil.env`, chmod 600) |
+
+```bash
+docker build --target api -t mashil-api .
+docker build --target worker -t mashil-worker .
+docker build --target migrate -t mashil-migrate .
+docker run --rm -e MASHIL_DB="Host=...;Database=mashil;Username=...;Password=..." mashil-migrate   # 마이그레이션
+```
+
+API 는 `Cors:Origins`(쉼표 구분)로 허용 도메인을 받는다. 기본은 `http://localhost:5173`.
 
 CSV 는 [LOCALDATA 공중화장실정보](https://file.localdata.go.kr/file/public_restroom_info/info) 의 "전국파일" 입니다.
 응답 헤더는 UTF-8 이라고 선언하지만 실제 파일은 CP949 — 임포터가 내용으로 판별합니다.

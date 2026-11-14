@@ -74,8 +74,11 @@ try
     // 지오코딩·일일 임포트는 Mashil.Worker 가 실행한다 (OPS-01). API 배포가 백그라운드 작업을 끊지 않도록 분리.
 
     // --- CORS (dev) ---
+    // --- CORS: Cors:Origins (쉼표 구분). 기본은 vite dev 서버 ---
+    var corsOrigins = (builder.Configuration["Cors:Origins"] ?? "http://localhost:5173")
+        .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
     builder.Services.AddCors(o => o.AddDefaultPolicy(p => p
-        .WithOrigins("http://localhost:5173")
+        .WithOrigins(corsOrigins)
         .AllowAnyHeader()
         .AllowAnyMethod()));
 
@@ -136,6 +139,11 @@ try
     app.UseCors();
     app.UseAuthentication();
     app.UseAuthorization();
+
+    // readiness: DB 까지 확인. 블루/그린 전환과 업타임 감시는 이쪽을 본다 (OPS-02)
+    app.MapGet("/healthz/ready", async (MashilDbContext db, CancellationToken ct) =>
+            await db.Database.CanConnectAsync(ct) ? Results.Ok(new { status = "ready" }) : Results.StatusCode(StatusCodes.Status503ServiceUnavailable))
+        .WithTags("Health").ExcludeFromDescription();
 
     app.MapGet("/healthz", () => Results.Ok(new { status = "ok" }))
         .WithTags("Health")
