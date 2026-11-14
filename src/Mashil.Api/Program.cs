@@ -179,6 +179,7 @@ try
     app.MapInteractionEndpoints();
     app.MapModerationEndpoints();
     app.MapDevKakaoTestEndpoints(); // Development 에서만 매핑됨
+    app.MapDevBridgeTestPage();     // Development 에서만 매핑됨 (Flutter 셸 브리지 시험)
 
     app.Run();
 }
