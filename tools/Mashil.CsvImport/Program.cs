@@ -1,207 +1,102 @@
-using System.Globalization;
-using System.Text;
-using CsvHelper;
-using CsvHelper.Configuration;
-using Mashil.CsvImport;
 using Mashil.Domain;
+using Mashil.Import;
 using Mashil.Infrastructure;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
-using NetTopologySuite.Geometries;
 
-Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+// 사용법:
+//   dotnet run --project tools/Mashil.CsvImport -- <CSV 경로> [--source=LOCALDATA_PUBLIC_RESTROOM] [--force] [--dry-run]
+//   --dry-run : DB 없이 인코딩 판별, 헤더 검증, 행 수, 관리번호 중복만 확인
+//   --force   : 직전 성공과 같은 파일이어도 다시 처리
+// 스키마는 만들지 않는다. 먼저 `dotnet ef database update` 로 마이그레이션을 적용할 것 (G10).
 
 var config = new ConfigurationBuilder()
-    .SetBasePath(Directory.GetCurrentDirectory())
+    .SetBasePath(AppContext.BaseDirectory)
     .AddJsonFile("appsettings.json", optional: true)
     .AddJsonFile("appsettings.Development.json", optional: true)
     .AddEnvironmentVariables()
-    .AddCommandLine(args)
     .Build();
 
-var csvPath = config["CsvPath"]
-    ?? args.FirstOrDefault(a => !a.StartsWith("--"))
-    ?? throw new ArgumentException("CSV path required (positional arg or --CsvPath=...).");
+var flags = args.Where(a => a.StartsWith("--", StringComparison.Ordinal)).ToHashSet(StringComparer.OrdinalIgnoreCase);
+var csvPath = args.FirstOrDefault(a => !a.StartsWith("--", StringComparison.Ordinal))
+    ?? throw new ArgumentException("CSV 경로가 필요합니다.");
+var sourceCode = flags.FirstOrDefault(f => f.StartsWith("--source=", StringComparison.OrdinalIgnoreCase))?["--source=".Length..]
+    ?? DataSourceCodes.LocalDataPublicRestroom;
+var dryRun = flags.Contains("--dry-run");
+var force = flags.Contains("--force");
+
+var file = await SourceFile.ReadAsync(csvPath);
+Console.WriteLine($"""
+    파일     : {file.FileName} ({file.Bytes.LongLength:N0} bytes)
+    SHA-256  : {file.Sha256}
+    인코딩   : {file.Encoding.ToLabel()} (내용으로 판별)
+    소스     : {sourceCode}
+    """);
+
+if (dryRun)
+{
+    var adapter = ImportRunner.AdapterFor(sourceCode);
+    var skipped = new List<string>();
+    var keys = new HashSet<string>(StringComparer.Ordinal);
+    int total = 0, dup = 0;
+    string? firstHash = null;
+    try
+    {
+        using var reader = file.OpenText();
+        foreach (var row in adapter.Read(reader, (line, why) => skipped.Add($"{line}: {why}")))
+        {
+            total++;
+            firstHash ??= row.ComputeHash();
+            if (!keys.Add(row.SourceKey)) dup++;
+        }
+    }
+    catch (SourceSchemaException ex)
+    {
+        Console.Error.WriteLine($"[거부] {ex.Message}");
+        return 2;
+    }
+
+    Console.WriteLine($"""
+        --- dry-run ---
+        행 수          : {total:N0}
+        관리번호 중복  : {dup:N0}
+        건너뛴 행      : {skipped.Count:N0}
+        첫 행 해시     : {firstHash}
+        """);
+    foreach (var s in skipped.Take(10)) Console.WriteLine("  skip " + s);
+    return 0;
+}
 
 var connStr = config.GetConnectionString("Postgres")
-    ?? "Host=localhost;Port=5432;Database=mashil;Username=mashil;Password=mashil_dev";
-
-var dbOptions = new DbContextOptionsBuilder<MashilDbContext>()
+    ?? throw new InvalidOperationException("ConnectionStrings:Postgres 가 필요합니다.");
+var options = new DbContextOptionsBuilder<MashilDbContext>()
     .UseNpgsql(connStr, npg => npg.UseNetTopologySuite())
     .Options;
 
-await using var db = new MashilDbContext(dbOptions);
-await db.Database.EnsureCreatedAsync();
+await using var db = new MashilDbContext(options);
 
-await using var stream = File.OpenRead(csvPath);
-// 한국 공공데이터 CSV는 EUC-KR 표기여도 실제로는 CP949(MS949 / KS_C_5601-1987) 슈퍼셋이 흔함.
-using var reader = new StreamReader(stream, Encoding.GetEncoding(949));
-using var csv = new CsvReader(reader, new CsvConfiguration(CultureInfo.InvariantCulture)
+var pending = (await db.Database.GetPendingMigrationsAsync()).ToList();
+if (pending.Count > 0)
 {
-    HasHeaderRecord = true,
-    BadDataFound = null,
-    MissingFieldFound = null,
-    ReadingExceptionOccurred = _ => false, // 손상 행 발생 시 throw 대신 false 반환 → 수동 스킵
-});
-
-csv.Context.RegisterClassMap<ToiletCsvRowMap>();
-
-var stats = new ImportStats();
-var batch = new List<Toilet>(capacity: 500);
-
-await csv.ReadAsync();
-csv.ReadHeader();
-
-while (await csv.ReadAsync())
-{
-    ToiletCsvRow row;
-    try
-    {
-        row = csv.GetRecord<ToiletCsvRow>();
-    }
-    catch (Exception ex) when (ex is CsvHelper.TypeConversion.TypeConverterException
-                                  or CsvHelper.MissingFieldException
-                                  or CsvHelper.BadDataException
-                                  or FormatException)
-    {
-        stats.Skipped++;
-        Console.Error.WriteLine($"[skip] row {csv.Parser.Row}: {ex.GetType().Name} {ex.Message.Split('\n')[0]}");
-        continue;
-    }
-
-    var toilet = MapRow(row, stats);
-    batch.Add(toilet);
-
-    if (batch.Count >= 500)
-    {
-        await UpsertBatchAsync(db, batch);
-        batch.Clear();
-    }
+    Console.Error.WriteLine($"[중단] 적용되지 않은 마이그레이션 {pending.Count}개: {string.Join(", ", pending)}");
+    Console.Error.WriteLine("        dotnet ef database update --project src/Mashil.Infrastructure --startup-project src/Mashil.Api");
+    return 3;
 }
-if (batch.Count > 0)
-{
-    await UpsertBatchAsync(db, batch);
-}
+
+var runner = new ImportRunner(db);
+var progress = new Progress<ImportRun>(r => Console.Write($"\r  처리 {r.TotalRows:N0} 행 (신규 {r.InsertedRows:N0} / 변경 {r.UpdatedRows:N0} / 동일 {r.UnchangedRows:N0})"));
+var run = await runner.RunAsync(sourceCode, file, ImportTrigger.Manual, force, progress);
+Console.WriteLine();
 
 Console.WriteLine($"""
-    --- 임포트 완료 ---
-    총 행 수            : {stats.Total}
-    좌표 + 주소 모두 존재 : {stats.WithCoordsAndAddress}
-    좌표만 존재          : {stats.CoordOnly}        (주소 reverse-geocode 큐 대상)
-    주소만 존재          : {stats.AddressOnly}      (좌표 geocode 큐 대상)
-    둘 다 없음           : {stats.Neither}          (검색 전용)
-    스킵 (손상 행)       : {stats.Skipped}
+    --- 임포트 결과 (run #{run.Id}) ---
+    상태      : {run.Status}{(run.Message is null ? "" : " — " + run.Message)}
+    전체 행   : {run.TotalRows:N0}
+    신규      : {run.InsertedRows:N0}
+    변경      : {run.UpdatedRows:N0}
+    변경 없음 : {run.UnchangedRows:N0}
+    건너뜀    : {run.SkippedRows:N0}
+    소요      : {(run.FinishedAt - run.StartedAt)?.TotalSeconds:N1}s
     """);
 
-return;
-
-static Toilet MapRow(ToiletCsvRow r, ImportStats stats)
-{
-    stats.Total++;
-
-    var hasCoord = r.Latitude.HasValue && r.Longitude.HasValue;
-    var hasAddress = !string.IsNullOrWhiteSpace(r.RoadAddress) || !string.IsNullOrWhiteSpace(r.LotAddress);
-
-    if (hasCoord && hasAddress) stats.WithCoordsAndAddress++;
-    else if (hasCoord) stats.CoordOnly++;
-    else if (hasAddress) stats.AddressOnly++;
-    else stats.Neither++;
-
-    Point? location = hasCoord ? new Point(r.Longitude!.Value, r.Latitude!.Value) { SRID = 4326 } : null;
-
-    var addressSource = !string.IsNullOrWhiteSpace(r.RoadAddress) ? AddressSource.CsvRoad
-        : !string.IsNullOrWhiteSpace(r.LotAddress) ? AddressSource.CsvLot
-        : AddressSource.Unknown;
-
-    return new Toilet
-    {
-        ManagementNo = r.ManagementNo,
-        LocalGovCode = r.LocalGovCode,
-        Kind = r.Kind ?? string.Empty,
-        Name = r.Name ?? string.Empty,
-        RoadAddress = NullIfBlank(r.RoadAddress),
-        LotAddress = NullIfBlank(r.LotAddress),
-        AddressSource = addressSource,
-        Latitude = r.Latitude,
-        Longitude = r.Longitude,
-        Location = location,
-        CoordinateSource = hasCoord ? CoordinateSource.Csv : CoordinateSource.Unknown,
-        MaleStallCount = r.MaleStallCount ?? 0,
-        MaleUrinalCount = r.MaleUrinalCount ?? 0,
-        MaleAccessibleStallCount = r.MaleAccessibleStallCount ?? 0,
-        MaleAccessibleUrinalCount = r.MaleAccessibleUrinalCount ?? 0,
-        MaleChildStallCount = r.MaleChildStallCount ?? 0,
-        MaleChildUrinalCount = r.MaleChildUrinalCount ?? 0,
-        FemaleStallCount = r.FemaleStallCount ?? 0,
-        FemaleAccessibleStallCount = r.FemaleAccessibleStallCount ?? 0,
-        FemaleChildStallCount = r.FemaleChildStallCount ?? 0,
-        ManagementOrg = NullIfBlank(r.ManagementOrg),
-        Phone = NullIfBlank(r.Phone),
-        OpenHours = NullIfBlank(r.OpenHours),
-        OpenHoursDetail = NullIfBlank(r.OpenHoursDetail),
-        InstalledYearMonth = NullIfBlank(r.InstalledYearMonth),
-        RemodeledYearMonth = NullIfBlank(r.RemodeledYearMonth),
-        OwnershipKind = NullIfBlank(r.OwnershipKind),
-        WasteType = NullIfBlank(r.WasteType),
-        SafetyFacilityRequired = ParseYn(r.SafetyFacilityRequired),
-        EmergencyBellInstalled = ParseYn(r.EmergencyBellInstalled),
-        EmergencyBellLocation = NullIfBlank(r.EmergencyBellLocation),
-        EntranceCctv = ParseYn(r.EntranceCctv),
-        DiaperChangerAvailable = ParseYn(r.DiaperChangerAvailable),
-        DiaperChangerLocation = NullIfBlank(r.DiaperChangerLocation),
-        DataReferenceDate = ParseDateOnly(r.DataReferenceDate),
-        DataUpdateKind = NullIfBlank(r.DataUpdateKind),
-        DataUpdatedAt = ParseDateTime(r.DataUpdatedAt),
-        LastModifiedAt = ParseDateTime(r.LastModifiedAt),
-    };
-}
-
-static string? NullIfBlank(string? s) => string.IsNullOrWhiteSpace(s) ? null : s.Trim();
-
-static bool? ParseYn(string? s) => s switch
-{
-    "Y" or "y" => true,
-    "N" or "n" => false,
-    _ => null,
-};
-
-static DateOnly? ParseDateOnly(string? s) =>
-    DateOnly.TryParse(s, out var d) ? d : null;
-
-static DateTime? ParseDateTime(string? s) =>
-    DateTime.TryParse(s, out var dt) ? DateTime.SpecifyKind(dt, DateTimeKind.Utc) : null;
-
-static async Task UpsertBatchAsync(MashilDbContext db, List<Toilet> batch)
-{
-    var keys = batch.Select(t => t.ManagementNo).ToList();
-    var existing = await db.Toilets
-        .Where(t => keys.Contains(t.ManagementNo))
-        .ToDictionaryAsync(t => t.ManagementNo);
-
-    foreach (var incoming in batch)
-    {
-        if (existing.TryGetValue(incoming.ManagementNo, out var current))
-        {
-            // SetValues 가 incoming 의 Guid.Empty Id / 새 CreatedAt 으로 덮어쓰지 않도록 미리 align
-            incoming.Id = current.Id;
-            incoming.CreatedAt = current.CreatedAt;
-            db.Entry(current).CurrentValues.SetValues(incoming);
-            current.UpdatedAt = DateTime.UtcNow;
-        }
-        else
-        {
-            db.Toilets.Add(incoming);
-        }
-    }
-    await db.SaveChangesAsync();
-}
-
-internal sealed class ImportStats
-{
-    public int Total;
-    public int WithCoordsAndAddress;
-    public int CoordOnly;
-    public int AddressOnly;
-    public int Neither;
-    public int Skipped;
-}
+return run.Status is ImportRunStatus.Succeeded or ImportRunStatus.Skipped ? 0 : 1;

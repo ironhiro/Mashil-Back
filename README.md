@@ -25,9 +25,12 @@ Mashil/
 ├── src/
 │   ├── Mashil.Api/                ASP.NET Core, /api/* + Swagger + JWT
 │   ├── Mashil.Domain/             엔티티 (Toilet, Rating, Comment, ChangeRequest, UserProfile)
-│   └── Mashil.Infrastructure/     EF Core + Npgsql + NetTopologySuite
+│   ├── Mashil.Infrastructure/     EF Core + Npgsql + NetTopologySuite (+ 마이그레이션)
+│   └── Mashil.Import/             원본 보존 임포트: 인코딩 판별, 소스 어댑터, 오버라이드 적용
+├── tests/
+│   └── Mashil.Import.Tests/       xUnit
 └── tools/
-    └── Mashil.CsvImport/          공중화장실정보.csv → DB (EUC-KR)
+    └── Mashil.CsvImport/          CLI: 공중화장실정보.csv → DB (Mashil.Import 사용)
 ```
 
 ## 개발 시작
@@ -81,14 +84,29 @@ docker compose up -d
 dotnet user-secrets --project src/Mashil.Api set "Jwt:SigningKey" "$(openssl rand -base64 48)"
 dotnet user-secrets --project src/Mashil.Api set "Kakao:RestApiKey" "<본인 REST API 키>"
 
-# 3) (선택) CSV 일회성 임포트 — 본인 환경의 CSV 경로
-dotnet run --project tools/Mashil.CsvImport -- "<공중화장실정보.csv 절대 경로>"
+# 3) 스키마 적용 (마이그레이션) — 임포터·API 는 스키마를 만들지 않는다
+dotnet tool restore
+dotnet ef database update --project src/Mashil.Infrastructure --startup-project src/Mashil.Api
+#   연결 문자열은 환경 변수 MASHIL_DB (없으면 docker-compose 기본값)
 
-# 4) 백엔드 (https://localhost:7099/swagger)
+# 4) (선택) CSV 임포트 — 먼저 --dry-run 으로 DB 없이 검증 가능
+dotnet run --project tools/Mashil.CsvImport -- "<공중화장실정보.csv 경로>" --dry-run
+dotnet run --project tools/Mashil.CsvImport -- "<공중화장실정보.csv 경로>"
+#   같은 파일을 다시 넣으면 Skipped. 강제로 다시 처리하려면 --force
+
+# 5) 백엔드 (https://localhost:7099/swagger)
 dotnet run --project src/Mashil.Api
+
+# 테스트
+dotnet test
 ```
 
-CSV 는 [공공데이터포털 — 공중화장실 표준데이터](https://www.data.go.kr/) 에서 받을 수 있습니다 (EUC-KR/CP949 인코딩).
+CSV 는 [LOCALDATA 공중화장실정보](https://file.localdata.go.kr/file/public_restroom_info/info) 의 "전국파일" 입니다.
+응답 헤더는 UTF-8 이라고 선언하지만 실제 파일은 CP949 — 임포터가 내용으로 판별합니다.
+이 파일에는 **좌표가 없습니다.** 지도 표시는 Geocode 워커가 주소로 좌표를 채운 뒤부터 됩니다.
+
+임포트는 원본 행을 `raw_toilet_records` 에 그대로 보존하고, 바뀐 행만 `toilets` 에 반영합니다.
+관리자 수정·지오코딩 결과는 `toilet_overrides` 에 두고 재임포트 때 다시 적용하므로 덮어써지지 않습니다.
 
 ## 시크릿 설정
 
@@ -144,7 +162,8 @@ YhLibrary 위치 외에 환경 의존 값:
 | Postgres 연결 | `ConnectionStrings:Postgres` (User Secrets / env) | docker-compose dev DB |
 | Kakao REST API 키 | `Kakao:RestApiKey` (User Secrets / env) | 빈 값 → Geocode 워커 idle |
 | JWT 서명 키 | `Jwt:SigningKey` (User Secrets / env) | 빈 값 → 앱 시작 실패 (의도) |
-| CSV 파일 경로 | `Mashil.CsvImport` 의 CLI arg / `CsvPath` config | 없음 (필수) |
+| CSV 파일 경로 | `Mashil.CsvImport` 의 첫 번째 CLI arg | 없음 (필수) |
+| 마이그레이션 대상 DB | `MASHIL_DB` env (`dotnet ef` 디자인 타임) | docker-compose dev DB |
 
 소스에 `D:\...` / `C:\...` 같은 absolute 경로 박지 마세요. 새로 추가할 때도 위 패턴(env/User Secrets/CLI arg) 따르세요.
 

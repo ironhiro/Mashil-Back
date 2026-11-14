@@ -25,7 +25,8 @@ public static class ToiletEndpoints
             var take = Math.Clamp(limit ?? 1000, 1, 5000);
 
             var results = await db.Toilets
-                .Where(t => t.Location != null && t.Location.IsWithinDistance(origin, radiusM))
+                .Where(t => t.Status != ToiletStatus.Removed
+                         && t.Location != null && t.Location.IsWithinDistance(origin, radiusM))
                 .OrderBy(t => t.Location!.Distance(origin))
                 .Take(take)
                 .Select(t => new ToiletNearDto(
@@ -66,7 +67,8 @@ public static class ToiletEndpoints
         {
             var take = Math.Clamp(limit ?? 200, 1, 500);
             var results = await db.Toilets
-                .Where(t => t.Location != null
+                .Where(t => t.Status != ToiletStatus.Removed
+                         && t.Location != null
                          && t.Latitude >= south && t.Latitude <= north
                          && t.Longitude >= west && t.Longitude <= east)
                 .Take(take)
@@ -111,9 +113,10 @@ public static class ToiletEndpoints
             var take = Math.Clamp(limit ?? 50, 1, 200);
             var like = $"%{q}%";
             var results = await db.Toilets
-                .Where(t => EF.Functions.ILike(t.Name, like)
-                         || (t.RoadAddress != null && EF.Functions.ILike(t.RoadAddress, like))
-                         || (t.LotAddress != null && EF.Functions.ILike(t.LotAddress, like)))
+                .Where(t => t.Status != ToiletStatus.Removed
+                         && (EF.Functions.ILike(t.Name, like)
+                             || (t.RoadAddress != null && EF.Functions.ILike(t.RoadAddress, like))
+                             || (t.LotAddress != null && EF.Functions.ILike(t.LotAddress, like))))
                 .Take(take)
                 .Select(t => new ToiletSearchDto(
                     t.Id, t.Name,

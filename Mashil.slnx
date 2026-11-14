@@ -2,7 +2,11 @@
   <Folder Name="/src/">
     <Project Path="src/Mashil.Api/Mashil.Api.csproj" />
     <Project Path="src/Mashil.Domain/Mashil.Domain.csproj" />
+    <Project Path="src/Mashil.Import/Mashil.Import.csproj" />
     <Project Path="src/Mashil.Infrastructure/Mashil.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Mashil.Import.Tests/Mashil.Import.Tests.csproj" />
   </Folder>
   <Folder Name="/tools/">
     <Project Path="tools/Mashil.CsvImport/Mashil.CsvImport.csproj" />

@@ -8,6 +8,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\Mashil.Domain\Mashil.Domain.csproj" />
     <ProjectReference Include="..\..\src\Mashil.Infrastructure\Mashil.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\src\Mashil.Import\Mashil.Import.csproj" />
     <!-- YhLibraryRoot 는 Directory.Build.props 에서 정의 (기본 ../MyLibrary, env YHLIBRARY_ROOT 로 override). -->
     <ProjectReference Include="$(YhLibraryRoot)\src\YhLibrary.Serialization\YhLibrary.Serialization.csproj" />
   </ItemGroup>
@@ -17,6 +18,10 @@
     <PackageReference Include="Microsoft.Extensions.Configuration" />
     <PackageReference Include="Microsoft.Extensions.Configuration.Json" />
     <PackageReference Include="Microsoft.Extensions.Hosting" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Update="appsettings*.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

@@ -20,6 +20,15 @@ public sealed class Toilet
 
     public required string Name { get; set; }
 
+    /// <summary>레코드 출처. 공공데이터 임포트 / 사용자 추가 요청 승인.</summary>
+    public ToiletOrigin Origin { get; set; } = ToiletOrigin.PublicData;
+
+    /// <summary>서비스 노출 상태. Removed 는 지도·검색에서 제외 (soft delete).</summary>
+    public ToiletStatus Status { get; set; } = ToiletStatus.Active;
+
+    /// <summary>원본보다 우선하는 필드 값 (관리자 수정, 승인된 변경 요청, 지오코딩).</summary>
+    public List<ToiletOverride> Overrides { get; set; } = [];
+
     public string? RoadAddress { get; set; }
     public string? LotAddress { get; set; }
     public AddressSource AddressSource { get; set; } = AddressSource.Unknown;
@@ -75,6 +84,20 @@ public sealed class Toilet
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+}
+
+public enum ToiletOrigin
+{
+    PublicData = 0,
+    UserSubmitted = 1,
+}
+
+public enum ToiletStatus
+{
+    Active = 0,
+    /// <summary>최신 임포트에 없음. 연속 누락이 쌓이면 Removed.</summary>
+    Missing = 1,
+    Removed = 2,
 }
 
 public enum CoordinateSource

@@ -66,7 +66,11 @@ namespace Mashil.Infrastructure.Migrations
 
                     b.HasIndex("RequesterId");
 
+                    b.HasIndex("ReviewedById");
+
                     b.HasIndex("Status");
+
+                    b.HasIndex("TargetToiletId");
 
                     b.ToTable("change_requests", (string)null);
                 });
@@ -102,9 +106,145 @@ namespace Mashil.Infrastructure.Migrations
 
                     b.HasIndex("ToiletId");
 
+                    b.HasIndex("UserId");
+
                     b.HasIndex("ToiletId", "Hidden");
 
                     b.ToTable("comments", (string)null);
+                });
+
+            modelBuilder.Entity("Mashil.Domain.DataSource", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<string>("Code")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("DownloadUrl")
+                        .HasColumnType("text");
+
+                    b.Property<string>("Encoding")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Format")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("InfoUrl")
+                        .HasColumnType("text");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("License")
+                        .HasColumnType("text");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Provider")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Code")
+                        .IsUnique();
+
+                    b.ToTable("data_sources", (string)null);
+
+                    b.HasData(
+                        new
+                        {
+                            Id = 1,
+                            Code = "LOCALDATA_PUBLIC_RESTROOM",
+                            DownloadUrl = "https://file.localdata.go.kr/file/download/public_restroom_info/info",
+                            Encoding = "Auto",
+                            Format = "CSV",
+                            InfoUrl = "https://file.localdata.go.kr/file/public_restroom_info/info",
+                            IsActive = true,
+                            Name = "공중화장실정보 (전국파일)",
+                            Provider = "LOCALDATA"
+                        });
+                });
+
+            modelBuilder.Entity("Mashil.Domain.ImportRun", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<string>("DetectedEncoding")
+                        .HasColumnType("text");
+
+                    b.Property<string>("FileName")
+                        .HasColumnType("text");
+
+                    b.Property<string>("FileSha256")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<long>("FileSizeBytes")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime?>("FinishedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("HeartbeatAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("InsertedRows")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Message")
+                        .HasColumnType("text");
+
+                    b.Property<string>("NormalizerVersion")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<int>("SkippedRows")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("SourceId")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime>("StartedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<int>("TotalRows")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Trigger")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<int>("UnchangedRows")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("UpdatedRows")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("SourceId", "Status", "StartedAt");
+
+                    b.ToTable("import_runs", (string)null);
                 });
 
             modelBuilder.Entity("Mashil.Domain.Rating", b =>
@@ -137,7 +277,63 @@ namespace Mashil.Infrastructure.Migrations
                     b.HasIndex("UserId", "ToiletId")
                         .IsUnique();
 
-                    b.ToTable("ratings", (string)null);
+                    b.ToTable("ratings", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_ratings_Score", "\"Score\" BETWEEN 1 AND 5");
+                        });
+                });
+
+            modelBuilder.Entity("Mashil.Domain.RawToiletRecord", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<int>("ConsecutiveMissing")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime>("FirstSeenAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<long>("LastImportRunId")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime>("LastSeenAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("PayloadJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<string>("RowHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<int>("SourceId")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("SourceKey")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<long?>("ToiletId")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("LastImportRunId");
+
+                    b.HasIndex("ToiletId");
+
+                    b.HasIndex("SourceId", "LastSeenAt");
+
+                    b.HasIndex("SourceId", "SourceKey")
+                        .IsUnique();
+
+                    b.ToTable("raw_toilet_records", (string)null);
                 });
 
             modelBuilder.Entity("Mashil.Domain.Toilet", b =>
@@ -252,6 +448,12 @@ namespace Mashil.Infrastructure.Migrations
                     b.Property<string>("OpenHoursDetail")
                         .HasColumnType("text");
 
+                    b.Property<string>("Origin")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("text")
+                        .HasDefaultValue("PublicData");
+
                     b.Property<string>("OwnershipKind")
                         .HasColumnType("text");
 
@@ -266,6 +468,12 @@ namespace Mashil.Infrastructure.Migrations
 
                     b.Property<bool?>("SafetyFacilityRequired")
                         .HasColumnType("boolean");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("text")
+                        .HasDefaultValue("Active");
 
                     b.Property<DateTime>("UpdatedAt")
                         .HasColumnType("timestamp with time zone");
@@ -282,7 +490,61 @@ namespace Mashil.Infrastructure.Migrations
                     b.HasIndex("ManagementNo")
                         .IsUnique();
 
+                    b.HasIndex("Status");
+
                     b.ToTable("toilets", (string)null);
+                });
+
+            modelBuilder.Entity("Mashil.Domain.ToiletOverride", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<long?>("ChangeRequestId")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("CreatedById")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("FieldName")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("boolean");
+
+                    b.Property<int>("Priority")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Source")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<long>("ToiletId")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("ValueJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ChangeRequestId");
+
+                    b.HasIndex("CreatedById");
+
+                    b.HasIndex("ToiletId", "FieldName", "Source")
+                        .IsUnique()
+                        .HasFilter("\"IsActive\"");
+
+                    b.ToTable("toilet_overrides", (string)null);
                 });
 
             modelBuilder.Entity("Mashil.Domain.UserProfile", b =>
@@ -319,6 +581,116 @@ namespace Mashil.Infrastructure.Migrations
                         .IsUnique();
 
                     b.ToTable("user_profiles", (string)null);
+                });
+
+            modelBuilder.Entity("Mashil.Domain.ChangeRequest", b =>
+                {
+                    b.HasOne("Mashil.Domain.UserProfile", null)
+                        .WithMany()
+                        .HasForeignKey("RequesterId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Mashil.Domain.UserProfile", null)
+                        .WithMany()
+                        .HasForeignKey("ReviewedById")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("Mashil.Domain.Toilet", null)
+                        .WithMany()
+                        .HasForeignKey("TargetToiletId")
+                        .OnDelete(DeleteBehavior.Restrict);
+                });
+
+            modelBuilder.Entity("Mashil.Domain.Comment", b =>
+                {
+                    b.HasOne("Mashil.Domain.Toilet", null)
+                        .WithMany()
+                        .HasForeignKey("ToiletId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Mashil.Domain.UserProfile", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Mashil.Domain.ImportRun", b =>
+                {
+                    b.HasOne("Mashil.Domain.DataSource", "Source")
+                        .WithMany()
+                        .HasForeignKey("SourceId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Source");
+                });
+
+            modelBuilder.Entity("Mashil.Domain.Rating", b =>
+                {
+                    b.HasOne("Mashil.Domain.Toilet", null)
+                        .WithMany()
+                        .HasForeignKey("ToiletId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Mashil.Domain.UserProfile", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Mashil.Domain.RawToiletRecord", b =>
+                {
+                    b.HasOne("Mashil.Domain.ImportRun", null)
+                        .WithMany()
+                        .HasForeignKey("LastImportRunId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Mashil.Domain.DataSource", "Source")
+                        .WithMany()
+                        .HasForeignKey("SourceId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Mashil.Domain.Toilet", "Toilet")
+                        .WithMany()
+                        .HasForeignKey("ToiletId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.Navigation("Source");
+
+                    b.Navigation("Toilet");
+                });
+
+            modelBuilder.Entity("Mashil.Domain.ToiletOverride", b =>
+                {
+                    b.HasOne("Mashil.Domain.ChangeRequest", null)
+                        .WithMany()
+                        .HasForeignKey("ChangeRequestId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("Mashil.Domain.UserProfile", null)
+                        .WithMany()
+                        .HasForeignKey("CreatedById")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("Mashil.Domain.Toilet", "Toilet")
+                        .WithMany("Overrides")
+                        .HasForeignKey("ToiletId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Toilet");
+                });
+
+            modelBuilder.Entity("Mashil.Domain.Toilet", b =>
+                {
+                    b.Navigation("Overrides");
                 });
 #pragma warning restore 612, 618
         }
