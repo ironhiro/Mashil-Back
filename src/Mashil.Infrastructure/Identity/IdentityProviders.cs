@@ -33,6 +33,9 @@ public sealed record VerifiedIdentity(
 
     /// <summary>Apple: 인가 코드를 교환해 받은 refresh token (revoke 용). 저장할 때는 암호화한다.</summary>
     public string? AppleRefreshToken { get; init; }
+
+    /// <summary>어떤 방식으로 검증했는지 (로그·진단용): id_token / access_token.</summary>
+    public string VerifiedBy { get; init; } = "id_token";
 }
 
 /// <summary>연결 해제 대상. 탈퇴 대기열(<see cref="IdpRevocation"/>)에서 만든다.</summary>

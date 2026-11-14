@@ -178,6 +178,7 @@ try
     app.MapToiletEndpoints();
     app.MapInteractionEndpoints();
     app.MapModerationEndpoints();
+    app.MapDevKakaoTestEndpoints(); // Development 에서만 매핑됨
 
     app.Run();
 }

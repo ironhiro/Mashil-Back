@@ -175,7 +175,7 @@ public sealed class OAuthLoginService(
 
         var tokens = await refreshTokens.IssueAsync(user, device, ct);
         var consentRequired = await consents.IsRequiredAsync(user.Id, ct);
-        logger.LogInformation("OAuth 로그인 {Provider} user={User} new={New}", provider, user.Id, isNew);
+        logger.LogInformation("OAuth 로그인 {Provider} ({VerifiedBy}) user={User} new={New}", provider, verified.VerifiedBy, user.Id, isNew);
         return new LoginResult(tokens, user, isNew, consentRequired);
     }
 

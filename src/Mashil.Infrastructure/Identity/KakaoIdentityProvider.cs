@@ -38,13 +38,18 @@ public sealed class KakaoIdentityProvider(
     {
         var idToken = c.IdToken;
         var accessToken = c.AccessToken;
+        IReadOnlyList<string> audiences = options.Audiences;
 
         if (!string.IsNullOrWhiteSpace(c.AuthorizationCode))
+        {
             (idToken, accessToken) = await ExchangeCodeAsync(c.AuthorizationCode, c.RedirectUri, ct);
+            // 서버가 REST API 키로 직접 교환해 받은 ID Token 은 aud 가 REST API 키다
+            audiences = [.. options.Audiences, RestApiKey!];
+        }
 
         if (!string.IsNullOrWhiteSpace(idToken))
         {
-            var token = await oidc.ValidateAsync(idToken, options.Audiences, ct);
+            var token = await oidc.ValidateAsync(idToken, audiences, ct);
             OidcTokenValidator.CheckNonce(token, expectedNonce, options.RequireNonce);
             var subject = token.Subject;
             if (string.IsNullOrWhiteSpace(subject)) throw AuthFailure.Invalid("sub 없음");
@@ -68,7 +73,7 @@ public sealed class KakaoIdentityProvider(
 
             return new VerifiedIdentity(AuthProvider.Kakao, subject, token.Audiences.FirstOrDefault(),
                 OidcTokenValidator.Claim(token, "email"), OidcTokenValidator.Claim(token, "nickname"))
-            { KakaoAccessToken = verifiedAccess };
+            { KakaoAccessToken = verifiedAccess, VerifiedBy = "id_token" };
         }
 
         if (!string.IsNullOrWhiteSpace(accessToken))
@@ -95,7 +100,7 @@ public sealed class KakaoIdentityProvider(
                 nickname = pn.GetString();
 
             return new VerifiedIdentity(AuthProvider.Kakao, id.ToString(), info.AppId.ToString(), email, nickname)
-            { KakaoAccessToken = accessToken };
+            { KakaoAccessToken = accessToken, VerifiedBy = "access_token" };
         }
 
         throw new AuthFailure("invalid_request", 400, "idToken, accessToken, authorizationCode 중 하나가 필요");
