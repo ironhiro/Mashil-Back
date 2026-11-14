@@ -1,22 +1,18 @@
-using System.Globalization;
-using Mashil.Domain;
-using Mashil.Infrastructure;
-using Microsoft.EntityFrameworkCore;
+using Mashil.Import.Geocoding;
 using Microsoft.Extensions.Options;
-using NetTopologySuite.Geometries;
 
 namespace Mashil.Worker.Geocoding;
 
 /// <summary>
-/// 두 큐를 한 워커에서 처리:
-///  1. Geocode — 주소만 있는 행 (Location null AND has address) → Kakao 주소검색 → Location 채움
-///  2. Reverse-geocode — 좌표만 있는 행 (Location not null AND no address) → Kakao coord2address → 주소 채움
-/// 매칭 실패 행은 KakaoNoMatch 로 표시해 무한 재시도 차단.
+/// 좌표가 없는 화장실을 계속 지오코딩한다 (G13). 실제 로직은 <see cref="GeocodingService"/>.
+/// 일일 예산을 다 쓰거나 Kakao 가 429/401 을 주면 다음 날 KST 00:05 까지 쉰다.
+/// LOCALDATA 파일에는 좌표가 없으므로 역지오코딩(좌표 → 주소)은 더 이상 하지 않는다.
 /// </summary>
 public sealed class GeocodeWorker(
     ILogger<GeocodeWorker> logger,
     IOptions<GeocodeWorkerOptions> opts,
-    IServiceScopeFactory scopeFactory) : BackgroundService
+    IServiceScopeFactory scopeFactory,
+    TimeProvider clock) : BackgroundService
 {
     private readonly GeocodeWorkerOptions _opts = opts.Value;
 
@@ -28,138 +24,50 @@ public sealed class GeocodeWorker(
             return;
         }
 
-        logger.LogInformation(
-            "GeocodeWorker started. BatchSize={Batch}, RequestDelay={Delay}ms, BatchSleep={Sleep}s",
-            _opts.BatchSize, _opts.RequestDelayMs, _opts.BatchSleepSeconds);
+        logger.LogInformation("GeocodeWorker started. BatchSize={Batch}, RequestDelay={Delay}ms, DailyBudget={Budget}",
+            _opts.BatchSize, _opts.RequestDelayMs, _opts.DailyBudget);
 
         while (!stoppingToken.IsCancellationRequested)
         {
+            TimeSpan sleep;
             try
             {
-                var processed = 0;
-                processed += await ProcessGeocodeBatchAsync(stoppingToken);
-                processed += await ProcessReverseGeocodeBatchAsync(stoppingToken);
+                await using var scope = scopeFactory.CreateAsyncScope();
+                var service = scope.ServiceProvider.GetService<GeocodingService>();
+                if (service is null)
+                {
+                    logger.LogWarning("Kakao:RestApiKey 가 없어 지오코딩을 하지 않습니다.");
+                    return;
+                }
 
-                var sleep = processed > 0 ? _opts.BatchSleepSeconds : _opts.IdleSleepSeconds;
-                await Task.Delay(TimeSpan.FromSeconds(sleep), stoppingToken);
+                var r = await service.RunBatchAsync(ct: stoppingToken);
+                if (r.Processed > 0)
+                    logger.LogInformation("Geocode batch: 처리 {Processed} (성공 {Matched} / 실패 {NoMatch}), API {Calls}, 캐시 {Hits}",
+                        r.Processed, r.Matched, r.NoMatch, r.ApiCalls, r.CacheHits);
+
+                if (r.BudgetExhausted || r.GeocoderUnavailable)
+                {
+                    sleep = UntilNextKstDay(clock.GetUtcNow());
+                    logger.LogWarning("지오코딩 중단 ({Reason}) — {Hours:N1}시간 뒤 재개",
+                        r.BudgetExhausted ? "일일 예산 소진" : "Kakao 호출 불가(429/401)", sleep.TotalHours);
+                }
+                else sleep = TimeSpan.FromSeconds(r.Processed > 0 ? _opts.BatchSleepSeconds : _opts.IdleSleepSeconds);
             }
-            catch (OperationCanceledException)
-            {
-                break;
-            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { return; }
             catch (Exception ex)
             {
-                logger.LogError(ex, "GeocodeWorker batch failed; backing off.");
-                await Task.Delay(TimeSpan.FromSeconds(_opts.IdleSleepSeconds), stoppingToken);
+                logger.LogError(ex, "GeocodeWorker 루프 오류 — 잠시 뒤 재시도");
+                sleep = TimeSpan.FromSeconds(_opts.IdleSleepSeconds);
             }
+
+            await Task.Delay(sleep, clock, stoppingToken);
         }
     }
 
-    private async Task<int> ProcessGeocodeBatchAsync(CancellationToken ct)
+    internal static TimeSpan UntilNextKstDay(DateTimeOffset nowUtc)
     {
-        await using var scope = scopeFactory.CreateAsyncScope();
-        var db = scope.ServiceProvider.GetRequiredService<MashilDbContext>();
-        var kakao = scope.ServiceProvider.GetRequiredService<KakaoLocalClient>();
-
-        var batch = await db.Toilets
-            .Where(t => t.Location == null
-                     && t.CoordinateSource == CoordinateSource.Unknown
-                     && (t.RoadAddress != null || t.LotAddress != null))
-            .OrderBy(t => t.Id)
-            .Take(_opts.BatchSize)
-            .ToListAsync(ct);
-
-        if (batch.Count == 0) return 0;
-
-        logger.LogInformation("Geocoding {Count} rows...", batch.Count);
-        var matched = 0;
-        foreach (var t in batch)
-        {
-            ct.ThrowIfCancellationRequested();
-            var query = t.RoadAddress ?? t.LotAddress!;
-            try
-            {
-                var resp = await kakao.SearchAddressAsync(query, ct);
-                var first = resp?.Documents.FirstOrDefault();
-                if (first is null
-                    || !double.TryParse(first.X, NumberStyles.Any, CultureInfo.InvariantCulture, out var lng)
-                    || !double.TryParse(first.Y, NumberStyles.Any, CultureInfo.InvariantCulture, out var lat))
-                {
-                    t.CoordinateSource = CoordinateSource.KakaoNoMatch;
-                    continue;
-                }
-                t.Latitude = lat;
-                t.Longitude = lng;
-                t.Location = new Point(lng, lat) { SRID = 4326 };
-                t.CoordinateSource = CoordinateSource.KakaoGeocoded;
-                t.UpdatedAt = DateTime.UtcNow;
-                matched++;
-            }
-            catch (Exception ex)
-            {
-                logger.LogWarning(ex, "geocode 실패 (id={Id}, query={Query}); 다음 배치에서 재시도.", t.Id, query);
-                // 상태 변경 안 함 → 다음 배치에서 재시도
-            }
-
-            await Task.Delay(_opts.RequestDelayMs, ct);
-        }
-
-        await db.SaveChangesAsync(ct);
-        logger.LogInformation("Geocode batch done. matched={Matched}, no-match={NoMatch}",
-            matched, batch.Count - matched);
-        return batch.Count;
-    }
-
-    private async Task<int> ProcessReverseGeocodeBatchAsync(CancellationToken ct)
-    {
-        await using var scope = scopeFactory.CreateAsyncScope();
-        var db = scope.ServiceProvider.GetRequiredService<MashilDbContext>();
-        var kakao = scope.ServiceProvider.GetRequiredService<KakaoLocalClient>();
-
-        var batch = await db.Toilets
-            .Where(t => t.Location != null
-                     && t.RoadAddress == null
-                     && t.LotAddress == null
-                     && t.AddressSource == AddressSource.Unknown)
-            .OrderBy(t => t.Id)
-            .Take(_opts.BatchSize)
-            .ToListAsync(ct);
-
-        if (batch.Count == 0) return 0;
-
-        logger.LogInformation("Reverse-geocoding {Count} rows...", batch.Count);
-        var matched = 0;
-        foreach (var t in batch)
-        {
-            ct.ThrowIfCancellationRequested();
-            try
-            {
-                var resp = await kakao.Coord2AddressAsync(t.Longitude!.Value, t.Latitude!.Value, ct);
-                var first = resp?.Documents.FirstOrDefault();
-                var road = first?.RoadAddress?.AddressName;
-                var lot = first?.Address?.AddressName;
-                if (string.IsNullOrWhiteSpace(road) && string.IsNullOrWhiteSpace(lot))
-                {
-                    t.AddressSource = AddressSource.KakaoNoMatch;
-                    continue;
-                }
-                if (!string.IsNullOrWhiteSpace(road)) t.RoadAddress = road;
-                if (!string.IsNullOrWhiteSpace(lot)) t.LotAddress = lot;
-                t.AddressSource = AddressSource.KakaoReverse;
-                t.UpdatedAt = DateTime.UtcNow;
-                matched++;
-            }
-            catch (Exception ex)
-            {
-                logger.LogWarning(ex, "reverse-geocode 실패 (id={Id}); 다음 배치에서 재시도.", t.Id);
-            }
-
-            await Task.Delay(_opts.RequestDelayMs, ct);
-        }
-
-        await db.SaveChangesAsync(ct);
-        logger.LogInformation("Reverse-geocode batch done. matched={Matched}, no-match={NoMatch}",
-            matched, batch.Count - matched);
-        return batch.Count;
+        var kst = nowUtc.ToOffset(TimeSpan.FromHours(9));
+        var next = new DateTimeOffset(kst.Date.AddDays(1).AddMinutes(5), TimeSpan.FromHours(9));
+        return next - nowUtc;
     }
 }

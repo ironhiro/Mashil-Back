@@ -1,9 +1,10 @@
-using System.Net.Http.Headers;
+
 using Mashil.Import;
 using Mashil.Import.LocalData;
 using Mashil.Infrastructure;
 using Mashil.Worker;
 using Mashil.Worker.Geocoding;
+using Mashil.Import.Geocoding;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 
@@ -42,17 +43,22 @@ builder.Services.AddSingleton<IAlertNotifier>(sp =>
     return new CompositeAlertNotifier(notifiers);
 });
 
-// --- 지오코딩 (Kakao Local API) ---
-builder.Services.AddSingleton<YhLibrary.Serialization.ISerializer, YhLibrary.Serialization.JsonSerializer>();
-builder.Services.AddHttpClient<YhLibrary.Http.ApiClient>((sp, c) =>
-{
-    c.BaseAddress = new Uri("https://dapi.kakao.com");
-    var key = sp.GetRequiredService<IConfiguration>()["Kakao:RestApiKey"];
-    if (!string.IsNullOrWhiteSpace(key))
-        c.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("KakaoAK", key); // Bearer 아님
-});
-builder.Services.AddScoped<KakaoLocalClient>();
+// --- 지오코딩 (Kakao Local API) — 키가 없으면 GeocodingService 를 등록하지 않음 (워커가 idle) ---
 builder.Services.Configure<GeocodeWorkerOptions>(builder.Configuration.GetSection("Geocode"));
+builder.Services.AddHttpClient(nameof(KakaoAddressGeocoder), c => c.Timeout = TimeSpan.FromSeconds(10));
+var kakaoKey = builder.Configuration["Kakao:RestApiKey"];
+if (!string.IsNullOrWhiteSpace(kakaoKey))
+{
+    builder.Services.AddScoped<IAddressGeocoder>(sp => new KakaoAddressGeocoder(
+        sp.GetRequiredService<IHttpClientFactory>().CreateClient(nameof(KakaoAddressGeocoder)), kakaoKey));
+    builder.Services.AddScoped(sp =>
+    {
+        var o = sp.GetRequiredService<IOptions<GeocodeWorkerOptions>>().Value;
+        return new GeocodingService(sp.GetRequiredService<MashilDbContext>(), sp.GetRequiredService<IAddressGeocoder>(),
+            new GeocodingOptions { BatchSize = o.BatchSize, RequestDelayMs = o.RequestDelayMs, DailyBudget = o.DailyBudget },
+            sp.GetRequiredService<TimeProvider>());
+    });
+}
 builder.Services.AddHostedService<GeocodeWorker>();
 
 var host = builder.Build();

@@ -247,10 +247,27 @@ public sealed class ImportRunner(MashilDbContext db, ImportPolicy? policy = null
     private void Normalize(SourceRow row, Toilet toilet, DateTime now)
     {
         var today = DateOnly.FromDateTime(now.AddHours(9));
+        var (roadBefore, lotBefore) = (toilet.RoadAddress, toilet.LotAddress);
         var drafts = LocalDataToiletMapper.Apply(row, toilet, _ctx, today);
+
+        // 주소가 바뀌면 지오코딩 좌표는 더 이상 믿을 수 없다 → 지오코딩 오버라이드를 끄고 다시 지오코딩 대상으로
+        var isExisting = toilet.Id != 0;
+        if (isExisting && (roadBefore != toilet.RoadAddress || lotBefore != toilet.LotAddress))
+        {
+            foreach (var o in toilet.Overrides.Where(o => o.IsActive && o.FieldName == OverrideFields.Location && o.Source == OverrideSource.Geocode))
+                o.IsActive = false;
+            if (!toilet.Overrides.Any(o => o.IsActive && o.FieldName == OverrideFields.Location))
+            {
+                toilet.Location = null;
+                toilet.Latitude = toilet.Longitude = null;
+                toilet.CoordinateSource = CoordinateSource.Unknown;
+            }
+            toilet.Issues.RemoveAll(i => i.Status == IssueStatus.Open && i.FieldName == IssueFields.Geocode);
+        }
         OverrideApplier.Apply(toilet, toilet.Overrides);
 
-        toilet.Issues.RemoveAll(i => i.Status == IssueStatus.Open);
+        // 정규화가 다시 계산하는 Open 이슈만 교체 (지오코딩 이슈는 GeocodingService 가 관리)
+        toilet.Issues.RemoveAll(i => i.Status == IssueStatus.Open && i.FieldName != IssueFields.Geocode);
         foreach (var d in drafts)
             toilet.Issues.Add(new NormalizationIssue
             {
@@ -266,6 +283,7 @@ public sealed class ImportRunner(MashilDbContext db, ImportPolicy? policy = null
         .Include(t => t.Schedules)
         .Include(t => t.Issues.Where(i => i.Status == IssueStatus.Open))
         .AsSplitQuery();
+    // 주: Overrides 는 활성만 로드한다. 주소 변경 시 비활성화하는 대상도 활성 중에서만 고르므로 충분하다.
 
     private async Task<NormalizationContext> LoadContextAsync(CancellationToken ct) =>
         NormalizationContext.FromMappings(await db.ValueMappings.AsNoTracking().Where(m => m.IsActive).ToListAsync(ct));

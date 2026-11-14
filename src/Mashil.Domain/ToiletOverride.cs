@@ -30,9 +30,11 @@ public sealed class ToiletOverride
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 }
 
-/// <summary>우선순위 = 정수값. Admin 30 &gt; ChangeRequest 20 &gt; Geocode 10.</summary>
+/// <summary>우선순위 = 정수값. Admin 30 &gt; ChangeRequest 20 &gt; Geocode 10 &gt; ImportedCoordinate 5.</summary>
 public enum OverrideSource
 {
+    /// <summary>예전 데이터(좌표가 있던 표준데이터)에서 가져온 좌표. 지오코딩보다 낮다.</summary>
+    ImportedCoordinate = 5,
     Geocode = 10,
     ChangeRequest = 20,
     Admin = 30,

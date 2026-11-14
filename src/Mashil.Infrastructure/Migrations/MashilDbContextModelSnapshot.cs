@@ -176,6 +176,53 @@ namespace Mashil.Infrastructure.Migrations
                         });
                 });
 
+            modelBuilder.Entity("Mashil.Domain.GeocodeCacheEntry", b =>
+                {
+                    b.Property<string>("QueryKey")
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)");
+
+                    b.Property<int>("CandidateCount")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime>("GeocodedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<double?>("Latitude")
+                        .HasColumnType("double precision");
+
+                    b.Property<double?>("Longitude")
+                        .HasColumnType("double precision");
+
+                    b.Property<string>("MatchedAddress")
+                        .HasColumnType("text");
+
+                    b.Property<string>("MatchedSido")
+                        .HasColumnType("text");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
+                    b.HasKey("QueryKey");
+
+                    b.ToTable("geocode_cache", (string)null);
+                });
+
+            modelBuilder.Entity("Mashil.Domain.GeocodeDailyUsage", b =>
+                {
+                    b.Property<DateOnly>("UsageDate")
+                        .HasColumnType("date");
+
+                    b.Property<int>("Calls")
+                        .HasColumnType("integer");
+
+                    b.HasKey("UsageDate");
+
+                    b.ToTable("geocode_daily_usage", (string)null);
+                });
+
             modelBuilder.Entity("Mashil.Domain.ImportRun", b =>
                 {
                     b.Property<long>("Id")

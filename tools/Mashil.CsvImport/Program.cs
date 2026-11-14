@@ -1,5 +1,6 @@
 using Mashil.Domain;
 using Mashil.Import;
+using Mashil.Import.Geocoding;
 using Mashil.Import.LocalData;
 using Mashil.Import.Normalization;
 using Mashil.Infrastructure;
@@ -21,6 +22,7 @@ var config = new ConfigurationBuilder()
     .SetBasePath(AppContext.BaseDirectory)
     .AddJsonFile("appsettings.json", optional: true)
     .AddJsonFile("appsettings.Development.json", optional: true)
+    .AddUserSecrets("mashil-api-3f7e82a4-e2c8-4f6e-9d1a-1b9c54a6f8a2") // Mashil.Api 와 공유 (Kakao:RestApiKey)
     .AddEnvironmentVariables()
     .Build();
 
@@ -106,6 +108,40 @@ if (approveRunId is { } runId)
 {
     var removed = await MissingRecordProcessor.ApprovePendingRemovalsAsync(db, runId, policy, CancellationToken.None);
     Console.WriteLine($"run #{runId}: {removed:N0}건 Removed 처리");
+    return 0;
+}
+
+// --- 기존 좌표를 오버라이드로 옮기기 (한 번만 하면 됨, 다시 해도 중복 없음) ---
+if (Has("--adopt-coordinates"))
+{
+    var adopted = await GeocodingService.AdoptExistingCoordinatesAsync(db, CancellationToken.None);
+    Console.WriteLine($"기존 좌표 {adopted:N0}건을 오버라이드로 옮김");
+    return 0;
+}
+
+// --- 지오코딩 N건 (검증용. 상시 처리는 Mashil.Worker 의 GeocodeWorker) ---
+if (Flag("--geocode") is { } geocodeArg)
+{
+    var key = config["Kakao:RestApiKey"];
+    if (string.IsNullOrWhiteSpace(key)) { Console.Error.WriteLine("[중단] Kakao:RestApiKey 가 없습니다 (user-secrets)."); return 6; }
+    var limit = int.TryParse(geocodeArg, out var gl) ? gl : 50;
+    using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
+    var service = new GeocodingService(db, new KakaoAddressGeocoder(http, key),
+        new GeocodingOptions { BatchSize = Math.Min(limit, 50), DailyBudget = int.TryParse(config["Geocode:DailyBudget"], out var b) ? b : 80_000 });
+    Console.WriteLine($"지오코딩 대상 {await service.Pending().CountAsync():N0}건 중 최대 {limit:N0}건 처리");
+    int done = 0, ok = 0, fail = 0, calls = 0, hits = 0;
+    while (done < limit)
+    {
+        var r = await service.RunBatchAsync(Math.Min(50, limit - done));
+        done += r.Processed; ok += r.Matched; fail += r.NoMatch; calls += r.ApiCalls; hits += r.CacheHits;
+        if (r.Processed == 0 || r.BudgetExhausted || r.GeocoderUnavailable)
+        {
+            if (r.BudgetExhausted) Console.WriteLine("일일 예산 소진으로 중단");
+            if (r.GeocoderUnavailable) Console.WriteLine("Kakao 호출 불가(429/401)로 중단");
+            break;
+        }
+    }
+    Console.WriteLine($"처리 {done:N0} · 성공 {ok:N0} · 실패 {fail:N0} · API {calls:N0}회 · 캐시 {hits:N0}회 · 성공률 {(done == 0 ? 0 : ok * 100.0 / done):N1}%");
     return 0;
 }
 

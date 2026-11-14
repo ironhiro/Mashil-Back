@@ -9,9 +9,6 @@
     <ProjectReference Include="..\Mashil.Domain\Mashil.Domain.csproj" />
     <ProjectReference Include="..\Mashil.Infrastructure\Mashil.Infrastructure.csproj" />
     <ProjectReference Include="..\Mashil.Import\Mashil.Import.csproj" />
-    <!-- YhLibraryRoot 는 Directory.Build.props 에서 정의. -->
-    <ProjectReference Include="$(YhLibraryRoot)\src\YhLibrary.Http\YhLibrary.Http.csproj" />
-    <ProjectReference Include="$(YhLibraryRoot)\src\YhLibrary.Serialization\YhLibrary.Serialization.csproj" />
   </ItemGroup>
 
   <ItemGroup>

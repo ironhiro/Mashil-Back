@@ -21,6 +21,8 @@ public sealed class MashilDbContext(DbContextOptions<MashilDbContext> options) :
     public DbSet<OpeningSchedule> OpeningSchedules => Set<OpeningSchedule>();
     public DbSet<NormalizationIssue> NormalizationIssues => Set<NormalizationIssue>();
     public DbSet<ValueMapping> ValueMappings => Set<ValueMapping>();
+    public DbSet<GeocodeCacheEntry> GeocodeCache => Set<GeocodeCacheEntry>();
+    public DbSet<GeocodeDailyUsage> GeocodeDailyUsage => Set<GeocodeDailyUsage>();
 
     protected override void OnModelCreating(ModelBuilder b)
     {
@@ -71,6 +73,20 @@ public sealed class MashilDbContext(DbContextOptions<MashilDbContext> options) :
             e.HasOne<UserProfile>().WithMany().HasForeignKey(i => i.ResolvedById).OnDelete(DeleteBehavior.Restrict);
             e.HasIndex(i => new { i.Status, i.Type });
             e.HasIndex(i => new { i.FieldName, i.RawValue }); // 같은 원본 값 일괄 처리
+        });
+
+        b.Entity<GeocodeCacheEntry>(e =>
+        {
+            e.ToTable("geocode_cache");
+            e.HasKey(c => c.QueryKey);
+            e.Property(c => c.QueryKey).HasMaxLength(256);
+            e.Property(c => c.Status).HasConversion<string>().HasMaxLength(16);
+        });
+
+        b.Entity<GeocodeDailyUsage>(e =>
+        {
+            e.ToTable("geocode_daily_usage");
+            e.HasKey(u => u.UsageDate);
         });
 
         b.Entity<ValueMapping>(e =>

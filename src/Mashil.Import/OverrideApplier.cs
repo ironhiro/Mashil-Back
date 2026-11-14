@@ -51,7 +51,12 @@ public static class OverrideApplier
         t.Latitude = lat;
         t.Longitude = lng;
         t.Location = new Point(lng, lat) { SRID = 4326 };
-        t.CoordinateSource = source == OverrideSource.Geocode ? CoordinateSource.KakaoGeocoded : CoordinateSource.AdminManual;
+        t.CoordinateSource = source switch
+        {
+            OverrideSource.Geocode => CoordinateSource.KakaoGeocoded,
+            OverrideSource.ImportedCoordinate => CoordinateSource.Csv,
+            _ => CoordinateSource.AdminManual,
+        };
     }
 
     /// <summary>오버라이드 값 JSON 을 만드는 도우미.</summary>
