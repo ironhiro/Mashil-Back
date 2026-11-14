@@ -30,6 +30,8 @@ try
     var connStr = builder.Configuration.GetConnectionString("Postgres")
         ?? throw new InvalidOperationException("ConnectionStrings:Postgres is not configured.");
 
+    builder.Services.AddAppStatus(builder.Configuration); // 점검 모드 (/api/app/status)
+
     builder.Services.AddDbContext<MashilDbContext>(opt =>
         opt.UseNpgsql(connStr, npg => npg.UseNetTopologySuite()));
 
@@ -176,6 +178,7 @@ try
 
     app.MapAuthEndpoints();
     app.MapToiletEndpoints();
+    app.MapAppEndpoints();
     app.MapInteractionEndpoints();
     app.MapModerationEndpoints();
     app.MapDevKakaoTestEndpoints(); // Development 에서만 매핑됨
