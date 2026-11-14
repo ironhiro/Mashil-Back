@@ -1,5 +1,6 @@
 using Mashil.Domain;
 using Mashil.Import.LocalData;
+using Mashil.Import.Normalization;
 using Mashil.Infrastructure;
 using Microsoft.EntityFrameworkCore;
 
@@ -20,8 +21,14 @@ namespace Mashil.Import;
 /// </summary>
 public sealed class ImportRunner(MashilDbContext db, ImportPolicy? policy = null, TimeProvider? clock = null)
 {
-    /// <summary>원본 → 표준 변환 로직 버전. 매핑 규칙을 바꾸면 올린다.</summary>
-    public const string NormalizerVersion = "0.1.0";
+    /// <summary>
+    /// 원본 → 표준 변환 로직 버전. 매핑 규칙을 바꾸면 올린다.
+    /// 화장실 행의 버전이 이보다 낮으면 원본이 그대로여도 다시 정규화한다.
+    /// 0.2.0: 개방시간 구조화, 구분 코드, 전화번호 표기, 이상치 이슈 (P2)
+    /// </summary>
+    public const string NormalizerVersion = "0.2.0";
+
+    private NormalizationContext _ctx = NormalizationContext.Empty;
 
     private readonly ImportPolicy _policy = policy ?? ImportPolicy.Default;
     private readonly TimeProvider _clock = clock ?? TimeProvider.System;
@@ -95,6 +102,7 @@ public sealed class ImportRunner(MashilDbContext db, ImportPolicy? policy = null
 
         try
         {
+            _ctx = await LoadContextAsync(ct);
             await ProcessAsync(source, adapter, file, run, progress, ct);
             await MissingRecordProcessor.ProcessAsync(db, source.Id, run, _policy, ct);
             if (run.Status == ImportRunStatus.Running) run.Status = ImportRunStatus.Succeeded;
@@ -164,8 +172,7 @@ public sealed class ImportRunner(MashilDbContext db, ImportPolicy? policy = null
             .Where(r => r.SourceId == source.Id && keys.Contains(r.SourceKey))
             .ToDictionaryAsync(r => r.SourceKey, StringComparer.Ordinal, ct);
 
-        var toilets = await db.Toilets
-            .Include(t => t.Overrides.Where(o => o.IsActive))
+        var toilets = await WithNormalizationGraph(db.Toilets)
             .Where(t => keys.Contains(t.ManagementNo))
             .ToDictionaryAsync(t => t.ManagementNo, StringComparer.Ordinal, ct);
 
@@ -173,8 +180,10 @@ public sealed class ImportRunner(MashilDbContext db, ImportPolicy? policy = null
         {
             var hash = row.ComputeHash();
             raws.TryGetValue(row.SourceKey, out var raw);
+            toilets.TryGetValue(row.SourceKey, out var existing);
 
-            if (raw is not null && raw.RowHash == hash && raw.ToiletId is not null)
+            if (raw is not null && raw.RowHash == hash && raw.ToiletId is not null
+                && existing?.NormalizerVersion == NormalizerVersion)
             {
                 raw.LastSeenAt = now;
                 raw.LastImportRunId = run.Id;
@@ -221,9 +230,7 @@ public sealed class ImportRunner(MashilDbContext db, ImportPolicy? policy = null
                 toilets[row.SourceKey] = toilet;
             }
 
-            LocalDataToiletMapper.Apply(row, toilet);
-            OverrideApplier.Apply(toilet, toilet.Overrides);
-            toilet.UpdatedAt = now;
+            Normalize(row, toilet, now);
             raw.Toilet = toilet;
 
             if (isNew) run.InsertedRows++;
@@ -234,6 +241,100 @@ public sealed class ImportRunner(MashilDbContext db, ImportPolicy? policy = null
         await db.SaveChangesAsync(ct); // 배치 = 한 트랜잭션
         db.ChangeTracker.Clear();
         db.ImportRuns.Attach(run);
+    }
+
+    /// <summary>원본 → 화장실 매핑 + 정규화 + 오버라이드, 그리고 자동 이슈 교체 (Open 만 다시 계산).</summary>
+    private void Normalize(SourceRow row, Toilet toilet, DateTime now)
+    {
+        var today = DateOnly.FromDateTime(now.AddHours(9));
+        var drafts = LocalDataToiletMapper.Apply(row, toilet, _ctx, today);
+        OverrideApplier.Apply(toilet, toilet.Overrides);
+
+        toilet.Issues.RemoveAll(i => i.Status == IssueStatus.Open);
+        foreach (var d in drafts)
+            toilet.Issues.Add(new NormalizationIssue
+            {
+                FieldName = d.Field, Type = d.Type, Severity = d.Severity, RawValue = d.RawValue, Note = d.Note, CreatedAt = now,
+            });
+
+        toilet.NormalizerVersion = NormalizerVersion;
+        toilet.UpdatedAt = now;
+    }
+
+    private static IQueryable<Toilet> WithNormalizationGraph(IQueryable<Toilet> q) => q
+        .Include(t => t.Overrides.Where(o => o.IsActive))
+        .Include(t => t.Schedules)
+        .Include(t => t.Issues.Where(i => i.Status == IssueStatus.Open))
+        .AsSplitQuery();
+
+    private async Task<NormalizationContext> LoadContextAsync(CancellationToken ct) =>
+        NormalizationContext.FromMappings(await db.ValueMappings.AsNoTracking().Where(m => m.IsActive).ToListAsync(ct));
+
+    /// <summary>
+    /// 파일 없이 저장된 원본(raw)으로 다시 정규화한다 (DATA-14). 정규화 규칙·매핑 사전이 바뀐 뒤 사용.
+    /// 누락 처리는 하지 않는다 (새 원본 정보가 없으므로).
+    /// </summary>
+    public async Task<ImportRun> RenormalizeAsync(string sourceCode, bool onlyOutdated = false, IProgress<ImportRun>? progress = null, CancellationToken ct = default)
+    {
+        var source = await db.DataSources.AsNoTracking().SingleAsync(s => s.Code == sourceCode, ct);
+        await using var importLock = await ImportLock.TryAcquireAsync(db, source.Id, ct)
+            ?? throw new ImportBusyException(sourceCode);
+
+        var now = Now();
+        var run = new ImportRun
+        {
+            SourceId = source.Id, Trigger = ImportTrigger.Renormalize, FileSha256 = "", FileName = "(raw)",
+            NormalizerVersion = NormalizerVersion, StartedAt = now, HeartbeatAt = now,
+        };
+        db.ImportRuns.Add(run);
+        await db.SaveChangesAsync(ct);
+
+        try
+        {
+            _ctx = await LoadContextAsync(ct);
+            long lastId = 0;
+            while (true)
+            {
+                var raws = await db.RawToiletRecords
+                    .Where(r => r.SourceId == source.Id && r.Id > lastId && r.ToiletId != null)
+                    .OrderBy(r => r.Id).Take(BatchSize).ToListAsync(ct);
+                if (raws.Count == 0) break;
+                lastId = raws[^1].Id;
+
+                var ids = raws.Select(r => r.ToiletId!.Value).ToList();
+                var query = WithNormalizationGraph(db.Toilets).Where(t => ids.Contains(t.Id));
+                if (onlyOutdated) query = query.Where(t => t.NormalizerVersion != NormalizerVersion);
+                var toilets = await query.ToDictionaryAsync(t => t.Id, ct);
+
+                var batchNow = Now();
+                foreach (var raw in raws)
+                {
+                    run.TotalRows++;
+                    if (!toilets.TryGetValue(raw.ToiletId!.Value, out var toilet)) { run.UnchangedRows++; continue; }
+                    var fields = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string?>>(raw.PayloadJson) ?? [];
+                    Normalize(new SourceRow(raw.SourceKey, fields, 0), toilet, batchNow);
+                    run.UpdatedRows++;
+                }
+
+                run.HeartbeatAt = batchNow;
+                await db.SaveChangesAsync(ct);
+                db.ChangeTracker.Clear();
+                db.ImportRuns.Attach(run);
+                progress?.Report(run);
+            }
+            run.Status = ImportRunStatus.Succeeded;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            run.Status = ImportRunStatus.Failed;
+            run.Message = ex.GetType().Name + ": " + ex.Message;
+        }
+
+        run.FinishedAt = Now();
+        db.ChangeTracker.Clear();
+        db.ImportRuns.Update(run);
+        await db.SaveChangesAsync(CancellationToken.None);
+        return run;
     }
 
     private DateTime Now() => _clock.GetUtcNow().UtcDateTime;

@@ -264,6 +264,107 @@ namespace Mashil.Infrastructure.Migrations
                     b.ToTable("import_runs", (string)null);
                 });
 
+            modelBuilder.Entity("Mashil.Domain.NormalizationIssue", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("FieldName")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<string>("Note")
+                        .HasColumnType("text");
+
+                    b.Property<string>("RawValue")
+                        .HasColumnType("text");
+
+                    b.Property<DateTime?>("ResolvedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("ResolvedById")
+                        .HasColumnType("uuid");
+
+                    b.Property<long?>("ResolvedByMappingId")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("Severity")
+                        .IsRequired()
+                        .HasMaxLength(8)
+                        .HasColumnType("character varying(8)");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(8)
+                        .HasColumnType("character varying(8)");
+
+                    b.Property<long>("ToiletId")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("Type")
+                        .IsRequired()
+                        .HasMaxLength(24)
+                        .HasColumnType("character varying(24)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ResolvedById");
+
+                    b.HasIndex("ResolvedByMappingId");
+
+                    b.HasIndex("ToiletId");
+
+                    b.HasIndex("FieldName", "RawValue");
+
+                    b.HasIndex("Status", "Type");
+
+                    b.ToTable("normalization_issues", (string)null);
+                });
+
+            modelBuilder.Entity("Mashil.Domain.OpeningSchedule", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<int?>("CloseMinute")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("DayType")
+                        .IsRequired()
+                        .HasMaxLength(8)
+                        .HasColumnType("character varying(8)");
+
+                    b.Property<bool>("IsClosed")
+                        .HasColumnType("boolean");
+
+                    b.Property<int?>("OpenMinute")
+                        .HasColumnType("integer");
+
+                    b.Property<long>("ToiletId")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ToiletId", "DayType");
+
+                    b.ToTable("opening_schedules", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_opening_schedules_Closed_or_Times", "\"IsClosed\" OR (\"OpenMinute\" IS NOT NULL AND \"CloseMinute\" IS NOT NULL)");
+
+                            t.HasCheckConstraint("CK_opening_schedules_Minutes", "\"OpenMinute\" BETWEEN 0 AND 1440 AND \"CloseMinute\" BETWEEN 0 AND 1440");
+                        });
+                });
+
             modelBuilder.Entity("Mashil.Domain.Rating", b =>
                 {
                     b.Property<long>("Id")
@@ -412,6 +513,13 @@ namespace Mashil.Infrastructure.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<string>("KindCode")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasDefaultValue("Other");
+
                     b.Property<DateTime?>("LastModifiedAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -459,6 +567,10 @@ namespace Mashil.Infrastructure.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<string>("NormalizerVersion")
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
                     b.Property<string>("OpenHours")
                         .HasColumnType("text");
 
@@ -485,6 +597,13 @@ namespace Mashil.Infrastructure.Migrations
 
                     b.Property<bool?>("SafetyFacilityRequired")
                         .HasColumnType("boolean");
+
+                    b.Property<string>("ScheduleStatus")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasDefaultValue("Unknown");
 
                     b.Property<string>("Status")
                         .IsRequired()
@@ -600,6 +719,47 @@ namespace Mashil.Infrastructure.Migrations
                     b.ToTable("user_profiles", (string)null);
                 });
 
+            modelBuilder.Entity("Mashil.Domain.ValueMapping", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<string>("CanonicalJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("CreatedById")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("FieldName")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("RawKey")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CreatedById");
+
+                    b.HasIndex("FieldName", "RawKey")
+                        .IsUnique()
+                        .HasFilter("\"IsActive\"");
+
+                    b.ToTable("value_mappings", (string)null);
+                });
+
             modelBuilder.Entity("Mashil.Domain.ChangeRequest", b =>
                 {
                     b.HasOne("Mashil.Domain.UserProfile", null)
@@ -643,6 +803,38 @@ namespace Mashil.Infrastructure.Migrations
                         .IsRequired();
 
                     b.Navigation("Source");
+                });
+
+            modelBuilder.Entity("Mashil.Domain.NormalizationIssue", b =>
+                {
+                    b.HasOne("Mashil.Domain.UserProfile", null)
+                        .WithMany()
+                        .HasForeignKey("ResolvedById")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("Mashil.Domain.ValueMapping", null)
+                        .WithMany()
+                        .HasForeignKey("ResolvedByMappingId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.HasOne("Mashil.Domain.Toilet", "Toilet")
+                        .WithMany("Issues")
+                        .HasForeignKey("ToiletId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Toilet");
+                });
+
+            modelBuilder.Entity("Mashil.Domain.OpeningSchedule", b =>
+                {
+                    b.HasOne("Mashil.Domain.Toilet", "Toilet")
+                        .WithMany("Schedules")
+                        .HasForeignKey("ToiletId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Toilet");
                 });
 
             modelBuilder.Entity("Mashil.Domain.Rating", b =>
@@ -705,9 +897,21 @@ namespace Mashil.Infrastructure.Migrations
                     b.Navigation("Toilet");
                 });
 
+            modelBuilder.Entity("Mashil.Domain.ValueMapping", b =>
+                {
+                    b.HasOne("Mashil.Domain.UserProfile", null)
+                        .WithMany()
+                        .HasForeignKey("CreatedById")
+                        .OnDelete(DeleteBehavior.Restrict);
+                });
+
             modelBuilder.Entity("Mashil.Domain.Toilet", b =>
                 {
+                    b.Navigation("Issues");
+
                     b.Navigation("Overrides");
+
+                    b.Navigation("Schedules");
                 });
 #pragma warning restore 612, 618
         }

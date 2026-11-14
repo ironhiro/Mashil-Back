@@ -15,10 +15,24 @@ public sealed class Toilet
     /// <summary>개방자치단체코드.</summary>
     public int LocalGovCode { get; set; }
 
-    /// <summary>구분명 (공중화장실 / 개방화장실 / ...).</summary>
+    /// <summary>구분명 원문 (공중화장실 / 개방화장실 / ...). 표시용.</summary>
     public required string Kind { get; set; }
 
+    /// <summary>구분 코드 (정규화 결과).</summary>
+    public ToiletKind KindCode { get; set; } = ToiletKind.Other;
+
     public required string Name { get; set; }
+
+    /// <summary>개방시간 판정 상태. Scheduled 면 <see cref="Schedules"/> 에 요일별 시간대.</summary>
+    public ScheduleStatus ScheduleStatus { get; set; } = ScheduleStatus.Unknown;
+
+    public List<OpeningSchedule> Schedules { get; set; } = [];
+
+    /// <summary>자동 정규화 이슈 (Open 은 재정규화 때 다시 계산됨).</summary>
+    public List<NormalizationIssue> Issues { get; set; } = [];
+
+    /// <summary>이 행을 마지막으로 정규화한 로직 버전. 낮으면 다음 임포트·재정규화 때 다시 계산.</summary>
+    public string? NormalizerVersion { get; set; }
 
     /// <summary>레코드 출처. 공공데이터 임포트 / 사용자 추가 요청 승인.</summary>
     public ToiletOrigin Origin { get; set; } = ToiletOrigin.PublicData;

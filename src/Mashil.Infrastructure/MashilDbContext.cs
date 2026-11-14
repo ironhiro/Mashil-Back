@@ -17,6 +17,11 @@ public sealed class MashilDbContext(DbContextOptions<MashilDbContext> options) :
     public DbSet<RawToiletRecord> RawToiletRecords => Set<RawToiletRecord>();
     public DbSet<ToiletOverride> ToiletOverrides => Set<ToiletOverride>();
 
+    // --- 정규화 (P2) ---
+    public DbSet<OpeningSchedule> OpeningSchedules => Set<OpeningSchedule>();
+    public DbSet<NormalizationIssue> NormalizationIssues => Set<NormalizationIssue>();
+    public DbSet<ValueMapping> ValueMappings => Set<ValueMapping>();
+
     protected override void OnModelCreating(ModelBuilder b)
     {
         b.HasPostgresExtension("postgis");
@@ -33,7 +38,49 @@ public sealed class MashilDbContext(DbContextOptions<MashilDbContext> options) :
             e.Property(t => t.Origin).HasConversion<string>().HasDefaultValue(ToiletOrigin.PublicData).HasSentinel((ToiletOrigin)(-1));
             e.Property(t => t.Status).HasConversion<string>().HasDefaultValue(ToiletStatus.Active).HasSentinel((ToiletStatus)(-1));
             e.HasIndex(t => t.Status);
+            e.Property(t => t.KindCode).HasConversion<string>().HasMaxLength(16).HasDefaultValue(ToiletKind.Other).HasSentinel((ToiletKind)(-1));
+            e.Property(t => t.ScheduleStatus).HasConversion<string>().HasMaxLength(16).HasDefaultValue(ScheduleStatus.Unknown).HasSentinel((ScheduleStatus)(-1));
+            e.Property(t => t.NormalizerVersion).HasMaxLength(16);
             e.Ignore(t => t.IsLocatable);
+        });
+
+        b.Entity<OpeningSchedule>(e =>
+        {
+            e.ToTable("opening_schedules", t =>
+            {
+                t.HasCheckConstraint("CK_opening_schedules_Closed_or_Times", "\"IsClosed\" OR (\"OpenMinute\" IS NOT NULL AND \"CloseMinute\" IS NOT NULL)");
+                t.HasCheckConstraint("CK_opening_schedules_Minutes", "\"OpenMinute\" BETWEEN 0 AND 1440 AND \"CloseMinute\" BETWEEN 0 AND 1440");
+            });
+            e.HasKey(s => s.Id);
+            e.Property(s => s.DayType).HasConversion<string>().HasMaxLength(8);
+            e.HasOne(s => s.Toilet).WithMany(t => t.Schedules).HasForeignKey(s => s.ToiletId).OnDelete(DeleteBehavior.Cascade);
+            e.HasIndex(s => new { s.ToiletId, s.DayType });
+            e.Ignore(s => s.IsFullDay);
+        });
+
+        b.Entity<NormalizationIssue>(e =>
+        {
+            e.ToTable("normalization_issues");
+            e.HasKey(i => i.Id);
+            e.Property(i => i.FieldName).HasMaxLength(32);
+            e.Property(i => i.Type).HasConversion<string>().HasMaxLength(24);
+            e.Property(i => i.Severity).HasConversion<string>().HasMaxLength(8);
+            e.Property(i => i.Status).HasConversion<string>().HasMaxLength(8);
+            e.HasOne(i => i.Toilet).WithMany(t => t.Issues).HasForeignKey(i => i.ToiletId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne<ValueMapping>().WithMany().HasForeignKey(i => i.ResolvedByMappingId).OnDelete(DeleteBehavior.SetNull);
+            e.HasOne<UserProfile>().WithMany().HasForeignKey(i => i.ResolvedById).OnDelete(DeleteBehavior.Restrict);
+            e.HasIndex(i => new { i.Status, i.Type });
+            e.HasIndex(i => new { i.FieldName, i.RawValue }); // 같은 원본 값 일괄 처리
+        });
+
+        b.Entity<ValueMapping>(e =>
+        {
+            e.ToTable("value_mappings");
+            e.HasKey(m => m.Id);
+            e.Property(m => m.FieldName).HasMaxLength(32);
+            e.Property(m => m.CanonicalJson).HasColumnType("jsonb");
+            e.HasOne<UserProfile>().WithMany().HasForeignKey(m => m.CreatedById).OnDelete(DeleteBehavior.Restrict);
+            e.HasIndex(m => new { m.FieldName, m.RawKey }).IsUnique().HasFilter("\"IsActive\"");
         });
 
         b.Entity<UserProfile>(e =>

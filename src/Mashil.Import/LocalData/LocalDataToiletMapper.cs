@@ -1,12 +1,13 @@
 using System.Globalization;
 using Mashil.Domain;
+using Mashil.Import.Normalization;
 using H = Mashil.Import.LocalData.LocalDataPublicRestroomAdapter.H;
 
 namespace Mashil.Import.LocalData;
 
 /// <summary>
-/// 원본 행 → <see cref="Toilet"/> 필드. P1 은 기존 CsvImport 와 같은 수준(공백 정리, 정수·Y/N·날짜 변환)만 한다.
-/// 개방시간 구조화, 코드값·전화번호 정규화는 P2.
+/// 원본 행 → <see cref="Toilet"/> 필드 + 정규화 (P2): 구분 코드, 전화번호 표기, 개방시간 구조화,
+/// 변기 수·날짜 이상치 검출. 원문(개방시간, 구분명)은 표시·검증용으로 그대로 둔다.
 /// <para>
 /// 이 소스가 제공하지 않는 필드(좌표, <see cref="Toilet.CoordinateSource"/>)는 건드리지 않는다 —
 /// 지오코딩 결과가 재임포트로 지워지지 않게 (G1).
@@ -14,10 +15,17 @@ namespace Mashil.Import.LocalData;
 /// </summary>
 public static class LocalDataToiletMapper
 {
-    public static void Apply(SourceRow r, Toilet t)
+    /// <summary>원본 행을 화장실에 반영하고, 정규화 중 발견한 이슈를 돌려준다.</summary>
+    public static List<IssueDraft> Apply(SourceRow r, Toilet t, NormalizationContext? ctx = null, DateOnly? today = null)
     {
+        ctx ??= NormalizationContext.Empty;
+        var issues = new List<IssueDraft>();
+
         t.LocalGovCode = int.TryParse(r[H.LocalGovCode]?.Trim(), out var code) ? code : 0;
         t.Kind = Trim(r[H.Kind]) ?? string.Empty;
+        var (kindCode, kindIssue) = KindNormalizer.Normalize(r[H.Kind]);
+        t.KindCode = kindCode;
+        if (kindIssue is not null) issues.Add(kindIssue);
         t.Name = Trim(r[H.Name]) ?? string.Empty;
 
         var road = Trim(r[H.RoadAddress]);
@@ -46,10 +54,20 @@ public static class LocalDataToiletMapper
         t.FemaleAccessibleStallCount = Int(r[H.FemaleAccessibleStall]);
         t.FemaleChildStallCount = Int(r[H.FemaleChildStall]);
 
+        var counts = new[] { t.MaleStallCount, t.MaleUrinalCount, t.MaleAccessibleStallCount, t.MaleAccessibleUrinalCount,
+            t.MaleChildStallCount, t.MaleChildUrinalCount, t.FemaleStallCount, t.FemaleAccessibleStallCount, t.FemaleChildStallCount };
+        if (counts.Any(c => c > MaxPlausibleCount))
+            issues.Add(new IssueDraft(IssueFields.Facilities, IssueType.OutOfRange, IssueSeverity.Warning,
+                string.Join(",", counts), $"변기 수가 {MaxPlausibleCount}개를 넘음"));
+
         t.ManagementOrg = Trim(r[H.ManagementOrg]);
-        t.Phone = Trim(r[H.Phone]);
+        var (phone, phoneIssue) = PhoneNormalizer.Normalize(r[H.Phone]);
+        t.Phone = phone;
+        if (phoneIssue is not null) issues.Add(phoneIssue);
+
         t.OpenHours = Trim(r[H.OpenHours]);
         t.OpenHoursDetail = Trim(r[H.OpenHoursDetail]);
+        ApplyHours(t, OpeningHoursParser.Parse(t.OpenHours, t.OpenHoursDetail, ctx.For(IssueFields.OpeningHours)), issues);
         t.InstalledYearMonth = Trim(r[H.InstalledYearMonth]);
         t.RemodeledYearMonth = Trim(r[H.RemodeledYearMonth]);
 
@@ -66,6 +84,29 @@ public static class LocalDataToiletMapper
         t.DataUpdateKind = Trim(r[H.DataUpdateKind]);
         t.DataUpdatedAt = Kst(r[H.DataUpdatedAt]);
         t.LastModifiedAt = Kst(r[H.LastModifiedAt]);
+
+        var refToday = today ?? DateOnly.FromDateTime(DateTime.UtcNow.AddHours(9));
+        if (t.DataReferenceDate is { } refDate && (refDate > refToday || refDate.Year < 1990))
+            issues.Add(new IssueDraft(IssueFields.DataReferenceDate, IssueType.OutOfRange, IssueSeverity.Info,
+                r[H.DataReferenceDate], refDate > refToday ? "미래 날짜" : "1990년 이전"));
+
+        return issues;
+    }
+
+    /// <summary>비정상으로 보는 변기 수 기준 (실데이터 200 초과 24건).</summary>
+    public const int MaxPlausibleCount = 200;
+
+    /// <summary>파싱 결과를 화장실에 반영. 스케줄 행은 통째로 교체한다 (같은 트랜잭션).</summary>
+    public static void ApplyHours(Toilet t, HoursOutcome hours, List<IssueDraft> issues)
+    {
+        t.ScheduleStatus = hours.Status;
+        t.Schedules.Clear();
+        foreach (var e in hours.Entries)
+            t.Schedules.Add(new OpeningSchedule { DayType = e.Day, OpenMinute = e.Open, CloseMinute = e.Close, IsClosed = e.Closed });
+
+        if (hours.Issue is { } type)
+            issues.Add(new IssueDraft(IssueFields.OpeningHours, type, hours.Severity,
+                OpeningHoursParser.MappingKey(t.OpenHours, t.OpenHoursDetail), hours.Note));
     }
 
     internal static string? Trim(string? s) => string.IsNullOrWhiteSpace(s) ? null : s.Trim();

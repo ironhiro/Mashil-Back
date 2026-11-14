@@ -1,6 +1,7 @@
 using Mashil.Domain;
 using Mashil.Import;
 using Mashil.Import.LocalData;
+using Mashil.Import.Normalization;
 using Mashil.Infrastructure;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
@@ -31,6 +32,28 @@ var sourceCode = Flag("--source") ?? DataSourceCodes.LocalDataPublicRestroom;
 var csvPath = args.FirstOrDefault(a => !a.StartsWith("--", StringComparison.Ordinal));
 var approveRunId = long.TryParse(Flag("--approve-removals"), out var rid) ? rid : (long?)null;
 var policy = config.GetSection("Import:Policy").Get<ImportPolicy>() ?? ImportPolicy.Default;
+
+// --- 개방시간 파서 커버리지 리포트: DB 없이 ---
+if (Has("--hours-report"))
+{
+    var file = await LoadFileAsync(null);
+    using var reader = file.OpenText();
+    var rows = ImportRunner.AdapterFor(sourceCode).Read(reader).ToList();
+    var outcomes = rows.Select(r => (Key: OpeningHoursParser.MappingKey(r["개방시간"], r["개방시간상세"]),
+        Outcome: OpeningHoursParser.Parse(r["개방시간"], r["개방시간상세"]))).ToList();
+
+    Console.WriteLine($"--- 개방시간 파싱 결과 ({rows.Count:N0}행, 조합 {outcomes.Select(o => o.Key).Distinct().Count():N0}종) ---");
+    foreach (var g in outcomes.GroupBy(o => o.Outcome.Status).OrderByDescending(g => g.Count()))
+        Console.WriteLine($"  {g.Key,-16} {g.Count(),7:N0}  {g.Count() * 100.0 / rows.Count,5:N1}%");
+    Console.WriteLine("--- 이슈 ---");
+    foreach (var g in outcomes.Where(o => o.Outcome.Issue is not null).GroupBy(o => o.Outcome.Issue).OrderByDescending(g => g.Count()))
+        Console.WriteLine($"  {g.Key,-16} {g.Count(),7:N0}  {g.Count() * 100.0 / rows.Count,5:N1}%");
+    var top = int.TryParse(Flag("--top"), out var n) ? n : 30;
+    Console.WriteLine($"--- 판정 불가(Unparsed) 상위 {top} ---");
+    foreach (var g in outcomes.Where(o => o.Outcome.Issue == IssueType.Unparsed).GroupBy(o => o.Key).OrderByDescending(g => g.Count()).Take(top))
+        Console.WriteLine($"  {g.Count(),5:N0}  {g.Key}");
+    return 0;
+}
 
 // --- dry-run: DB 없이 ---
 if (Has("--dry-run"))
@@ -84,6 +107,16 @@ if (approveRunId is { } runId)
     var removed = await MissingRecordProcessor.ApprovePendingRemovalsAsync(db, runId, policy, CancellationToken.None);
     Console.WriteLine($"run #{runId}: {removed:N0}건 Removed 처리");
     return 0;
+}
+
+// --- 재정규화: 파일 없이 저장된 원본으로 (DATA-14) ---
+if (Has("--renormalize"))
+{
+    IProgress<ImportRun>? rp = Console.IsOutputRedirected ? null : new Progress<ImportRun>(r => Console.Write($"\r  재정규화 {r.UpdatedRows:N0} 행   "));
+    var rr = await new ImportRunner(db, policy).RenormalizeAsync(sourceCode, onlyOutdated: Has("--only-outdated"), progress: rp);
+    Console.WriteLine();
+    Console.WriteLine($"재정규화 run #{rr.Id}: {rr.Status}{(rr.Message is null ? "" : " — " + rr.Message)} · 처리 {rr.UpdatedRows:N0} / 원본 {rr.TotalRows:N0} · {(rr.FinishedAt - rr.StartedAt)?.TotalSeconds:N1}s");
+    return rr.Status == ImportRunStatus.Succeeded ? 0 : 1;
 }
 
 var source = await db.DataSources.AsNoTracking().SingleAsync(s => s.Code == sourceCode);

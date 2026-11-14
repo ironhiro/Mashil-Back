@@ -97,7 +97,10 @@ public class LocalDataAdapterTests
         Assert.False(t.EntranceCctv);
         Assert.Equal(new DateOnly(2026, 11, 10), t.DataReferenceDate);
         Assert.Equal(new DateTime(2026, 11, 11, 13, 27, 30, DateTimeKind.Utc), t.DataUpdatedAt); // KST 22:27:30 → UTC
-        Assert.Equal("0221484057", t.Phone); // 전화번호는 원본 그대로 (정규화는 P2)
+        Assert.Equal("02-2148-4057", t.Phone); // 국내 표기로 정규화 (P2)
+        Assert.Equal(ToiletKind.Open, t.KindCode);
+        Assert.Equal(ScheduleStatus.Scheduled, t.ScheduleStatus);
+        Assert.Contains(t.Schedules, s => s.DayType == DayType.Holiday && s.IsClosed); // "공휴일 휴관"
 
         // 원본에 좌표가 없으므로 지오코딩 결과가 유지돼야 한다 (G1)
         Assert.Same(geocoded, t.Location);
