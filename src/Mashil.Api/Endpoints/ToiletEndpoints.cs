@@ -239,14 +239,14 @@ public static class ToiletEndpoints
     }
 }
 
+/// <summary>추천 한 건: 근처 목록과 같은 화장실 정보 + 점수와 근거 (평점 수, 댓글이 받은 도움돼요/아니에요).</summary>
+public sealed record RecommendedToiletDto(ToiletNearDto Toilet, double Score, int RatingCount, int HelpfulUp, int HelpfulDown);
+
 /// <summary>
 /// 가까운 화장실 검색(`/near`) 응답 행. <c>DistanceM</c> 은 검색 중심점에서의 거리 (미터, PostGIS <c>ST_Distance</c> geography 결과).
 /// 시설 정보(변기 수), 영업 정보(영업시간/전화), 평점·댓글 집계까지 한 번에.
 /// <c>AverageRating</c> 은 평점 행이 없으면 null. <c>CommentCount</c> 는 hidden 제외.
 /// </summary>
-/// <summary>추천 한 건: 근처 목록과 같은 화장실 정보 + 점수와 근거 (평점 수, 댓글이 받은 도움돼요/아니에요).</summary>
-public sealed record RecommendedToiletDto(ToiletNearDto Toilet, double Score, int RatingCount, int HelpfulUp, int HelpfulDown);
-
 public sealed record ToiletNearDto(
     long Id,
     string Name,
