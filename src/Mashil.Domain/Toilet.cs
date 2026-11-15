@@ -15,10 +15,33 @@ public sealed class Toilet
     /// <summary>개방자치단체코드.</summary>
     public int LocalGovCode { get; set; }
 
-    /// <summary>구분명 (공중화장실 / 개방화장실 / ...).</summary>
+    /// <summary>구분명 원문 (공중화장실 / 개방화장실 / ...). 표시용.</summary>
     public required string Kind { get; set; }
 
+    /// <summary>구분 코드 (정규화 결과).</summary>
+    public ToiletKind KindCode { get; set; } = ToiletKind.Other;
+
     public required string Name { get; set; }
+
+    /// <summary>개방시간 판정 상태. Scheduled 면 <see cref="Schedules"/> 에 요일별 시간대.</summary>
+    public ScheduleStatus ScheduleStatus { get; set; } = ScheduleStatus.Unknown;
+
+    public List<OpeningSchedule> Schedules { get; set; } = [];
+
+    /// <summary>자동 정규화 이슈 (Open 은 재정규화 때 다시 계산됨).</summary>
+    public List<NormalizationIssue> Issues { get; set; } = [];
+
+    /// <summary>이 행을 마지막으로 정규화한 로직 버전. 낮으면 다음 임포트·재정규화 때 다시 계산.</summary>
+    public string? NormalizerVersion { get; set; }
+
+    /// <summary>레코드 출처. 공공데이터 임포트 / 사용자 추가 요청 승인.</summary>
+    public ToiletOrigin Origin { get; set; } = ToiletOrigin.PublicData;
+
+    /// <summary>서비스 노출 상태. Removed 는 지도·검색에서 제외 (soft delete).</summary>
+    public ToiletStatus Status { get; set; } = ToiletStatus.Active;
+
+    /// <summary>원본보다 우선하는 필드 값 (관리자 수정, 승인된 변경 요청, 지오코딩).</summary>
+    public List<ToiletOverride> Overrides { get; set; } = [];
 
     public string? RoadAddress { get; set; }
     public string? LotAddress { get; set; }
@@ -75,6 +98,20 @@ public sealed class Toilet
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+}
+
+public enum ToiletOrigin
+{
+    PublicData = 0,
+    UserSubmitted = 1,
+}
+
+public enum ToiletStatus
+{
+    Active = 0,
+    /// <summary>최신 임포트에 없음. 연속 누락이 쌓이면 Removed.</summary>
+    Missing = 1,
+    Removed = 2,
 }
 
 public enum CoordinateSource

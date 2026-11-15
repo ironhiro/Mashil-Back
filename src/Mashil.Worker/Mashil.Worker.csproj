@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk.Worker">
+
+  <PropertyGroup>
+    <!-- Mashil.Api 와 같은 User Secrets 를 공유 (Kakao:RestApiKey, ConnectionStrings:Postgres 등). -->
+    <UserSecretsId>mashil-api-3f7e82a4-e2c8-4f6e-9d1a-1b9c54a6f8a2</UserSecretsId>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Mashil.Domain\Mashil.Domain.csproj" />
+    <ProjectReference Include="..\Mashil.Infrastructure\Mashil.Infrastructure.csproj" />
+    <ProjectReference Include="..\Mashil.Import\Mashil.Import.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Hosting" />
+    <PackageReference Include="Microsoft.Extensions.Http" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\Mashil.Domain\Mashil.Domain.csproj" />
+    <ProjectReference Include="..\Mashil.Infrastructure\Mashil.Infrastructure.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="CsvHelper" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Mashil.Import.Tests" />
+  </ItemGroup>
+
+</Project>

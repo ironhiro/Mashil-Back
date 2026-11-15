@@ -1,0 +1,95 @@
+# 운영용 Compose (08-infrastructure.md §2 출시 단계).
+# VM 1대: Caddy(443) → api-blue / api-green, worker 1개, postgres(내부 전용).
+#
+#   cp deploy/.env.example /etc/mashil/mashil.env   # 값 채우기, chmod 600
+#   docker compose -f deploy/docker-compose.prod.yml --env-file /etc/mashil/mashil.env up -d
+#   배포는 deploy/deploy.sh (마이그레이션 → 블루/그린 하나씩 교체)
+
+name: mashil
+
+x-api: &api
+  image: ${MASHIL_IMAGE_API:-mashil-api:latest}
+  restart: unless-stopped
+  env_file: ${MASHIL_ENV_FILE:-/etc/mashil/mashil.env}
+  environment:
+    ASPNETCORE_ENVIRONMENT: Production
+    ConnectionStrings__Postgres: Host=postgres;Port=5432;Database=mashil;Username=mashil;Password=${POSTGRES_PASSWORD}
+  stop_grace_period: 30s          # graceful shutdown (OPS-02)
+  depends_on:
+    postgres:
+      condition: service_healthy
+  networks: [internal]
+
+services:
+  caddy:
+    image: caddy:2.8
+    restart: unless-stopped
+    ports: ["80:80", "443:443"]
+    environment:
+      MASHIL_DOMAIN: ${MASHIL_DOMAIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on: [api-blue, api-green]
+    networks: [internal]
+
+  api-blue:
+    <<: *api
+  api-green:
+    <<: *api
+
+  worker:
+    image: ${MASHIL_IMAGE_WORKER:-mashil-worker:latest}
+    restart: unless-stopped
+    env_file: ${MASHIL_ENV_FILE:-/etc/mashil/mashil.env}
+    environment:
+      DOTNET_ENVIRONMENT: Production
+      ConnectionStrings__Postgres: Host=postgres;Port=5432;Database=mashil;Username=mashil;Password=${POSTGRES_PASSWORD}
+    stop_grace_period: 30s
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [internal]
+
+  postgres:
+    image: postgis/postgis:16-3.4
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: mashil
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: mashil
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mashil -d mashil"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks: [internal]   # 외부 포트를 열지 않는다
+
+  # 매일 03:00 KST pg_dump (컨테이너 안 cron 대신 호스트 cron 에서 `docker compose run --rm backup` 권장)
+  backup:
+    image: postgis/postgis:16-3.4
+    profiles: [ops]
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+    entrypoint: ["sh", "-c", "pg_dump -h postgres -U mashil -d mashil -Fc > /backup/mashil-$$(date +%Y%m%d-%H%M).dump && find /backup -name 'mashil-*.dump' -mtime +7 -delete"]
+    volumes:
+      - ${MASHIL_BACKUP_DIR:-/var/backups/mashil}:/backup
+    networks: [internal]
+
+  migrate:
+    image: ${MASHIL_IMAGE_MIGRATE:-mashil-migrate:latest}
+    profiles: [ops]
+    environment:
+      MASHIL_DB: Host=postgres;Port=5432;Database=mashil;Username=mashil;Password=${POSTGRES_PASSWORD}
+    networks: [internal]
+
+volumes:
+  pgdata:
+  caddy_data:
+  caddy_config:
+
+networks:
+  internal:

@@ -12,14 +12,16 @@
   <ItemGroup>
     <ProjectReference Include="..\Mashil.Domain\Mashil.Domain.csproj" />
     <ProjectReference Include="..\Mashil.Infrastructure\Mashil.Infrastructure.csproj" />
-    <!-- YhLibraryRoot 는 Directory.Build.props 에서 정의 (기본 ../MyLibrary, env YHLIBRARY_ROOT 로 override). -->
-    <ProjectReference Include="$(YhLibraryRoot)\src\YhLibrary.Http\YhLibrary.Http.csproj" />
-    <ProjectReference Include="$(YhLibraryRoot)\src\YhLibrary.Serialization\YhLibrary.Serialization.csproj" />
+    <ProjectReference Include="..\Mashil.Import\Mashil.Import.csproj" />
+    <!-- YhLibrary 의존 제거 (2026-11-14): Kakao 클라이언트가 Mashil.Import 의 KakaoAddressGeocoder 로 옮겨감. -->
+    <!-- 저장소만으로 빌드되므로 Docker 빌드 컨텍스트가 단순해지고 MessagePack 취약점 경고도 사라짐. -->
+    <!-- 다시 필요하면 $(YhLibraryRoot) 참조를 되살리면 된다 (Directory.Build.props 정의는 남겨 둠). -->
   </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" />
-    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" />
+    <!-- 디자인 타임 전용 (dotnet ef). 런타임 출력에 포함되지 않음. -->
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" PrivateAssets="all" />
     <PackageReference Include="Serilog.AspNetCore" />
     <PackageReference Include="Swashbuckle.AspNetCore" />
   </ItemGroup>
