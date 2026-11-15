@@ -109,7 +109,12 @@ dotnet run --project src/Mashil.Worker
 # 테스트 (통합 테스트는 MASHIL_TEST_DB 가 있을 때만 실행, 임시 DB 를 만들고 지움)
 export MASHIL_TEST_DB="Host=localhost;Port=5432;Database=postgres;Username=mashil;Password=mashil_dev"
 dotnet test
+
+# API 회귀 테스트 (Postman 컬렉션, API 를 띄운 상태에서). Postman 앱에서는 두 파일을 import 해 Runner 로 실행
+npx newman@6 run tests/postman/Mashil.postman_collection.json -e tests/postman/local.postman_environment.json
 ```
+
+Postman 컬렉션(`tests/postman/`)은 실행마다 테스트 계정 둘을 새로 만들고(레거시 이메일 가입, 개발 설정에서만 켜짐) 인증·화장실·평점·댓글과 도움돼요·내 활동·제보·신고와 차단·토큰 회전을 순서대로 확인한다. 테스트 댓글·평점·제보·신고가 개발 DB 에 남으므로 운영 서버에는 돌리지 않는다. 생성 스크립트 없이 JSON 을 직접 고친다.
 
 ### 일일 갱신이 하는 일 (Mashil.Worker)
 
