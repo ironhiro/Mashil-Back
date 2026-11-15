@@ -302,6 +302,8 @@ public sealed class AccountDeletionService(
             await db.UserIdentities.Where(i => i.UserId == userId).ExecuteDeleteAsync(ct);
             await db.RefreshTokens.Where(t => t.UserId == userId).ExecuteDeleteAsync(ct);
             await db.UserBlocks.Where(b => b.BlockerId == userId || b.BlockedId == userId).ExecuteDeleteAsync(ct);
+            // 댓글 평가(도움돼요/아니에요)는 개인 활동이라 함께 지운다 (댓글 자체는 "탈퇴한 사용자"로 남는다)
+            await db.CommentVotes.Where(v => v.UserId == userId).ExecuteDeleteAsync(ct);
             // 평점·댓글·변경 요청·신고는 남기고 "탈퇴한 사용자"로 표시 (개인정보처리방침과 일치시킬 것)
             await tx.CommitAsync(ct);
         }

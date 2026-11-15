@@ -196,6 +196,33 @@ namespace Mashil.Infrastructure.Migrations
                     b.ToTable("comment_reports", (string)null);
                 });
 
+            modelBuilder.Entity("Mashil.Domain.CommentVote", b =>
+                {
+                    b.Property<long>("CommentId")
+                        .HasColumnType("bigint");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<short>("Value")
+                        .HasColumnType("smallint");
+
+                    b.HasKey("CommentId", "UserId");
+
+                    b.HasIndex("UserId");
+
+                    b.ToTable("comment_votes", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_comment_votes_Value", "\"Value\" IN (-1, 1)");
+                        });
+                });
+
             modelBuilder.Entity("Mashil.Domain.DataSource", b =>
                 {
                     b.Property<int>("Id")
@@ -1159,6 +1186,21 @@ namespace Mashil.Infrastructure.Migrations
                         .WithMany()
                         .HasForeignKey("ReviewedById")
                         .OnDelete(DeleteBehavior.Restrict);
+                });
+
+            modelBuilder.Entity("Mashil.Domain.CommentVote", b =>
+                {
+                    b.HasOne("Mashil.Domain.Comment", null)
+                        .WithMany()
+                        .HasForeignKey("CommentId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Mashil.Domain.UserProfile", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("Mashil.Domain.ImportRun", b =>

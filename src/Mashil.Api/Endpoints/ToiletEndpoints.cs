@@ -19,53 +19,9 @@ public static class ToiletEndpoints
             MashilDbContext db,
             CancellationToken ct) =>
         {
-            var origin = new Point(lng, lat) { SRID = 4326 };
             // 디폴트 1000 / 상한 5000 — 반경(radiusM) 이 자연 throttle.
             // 도심 + 큰 반경에서 수천 건 반환될 수 있으니 클라이언트가 처리 부담 고려.
-            var take = Math.Clamp(limit ?? 1000, 1, 5000);
-
-            var rows = await db.Toilets
-                .Where(t => t.Status != ToiletStatus.Removed
-                         && t.Location != null && t.Location.IsWithinDistance(origin, radiusM))
-                .OrderBy(t => t.Location!.Distance(origin))
-                .Take(take)
-                .Select(t => new
-                {
-                    t.Id, t.Name, t.Kind, t.KindCode,
-                    t.RoadAddress, t.LotAddress,
-                    t.Latitude, t.Longitude,
-                    DistanceM = t.Location!.Distance(origin),
-                    t.MaleStallCount, t.MaleUrinalCount,
-                    t.MaleAccessibleStallCount, t.MaleAccessibleUrinalCount,
-                    t.MaleChildStallCount, t.MaleChildUrinalCount,
-                    t.FemaleStallCount, t.FemaleAccessibleStallCount, t.FemaleChildStallCount,
-                    t.OpenHours, t.OpenHoursDetail, t.Phone,
-                    t.ScheduleStatus,
-                    Schedules = t.Schedules.Select(s => new ScheduleRow(s.DayType, s.OpenMinute, s.CloseMinute, s.IsClosed)).ToList(),
-                    // 평점 / 댓글 집계 — EF 가 SELECT subquery 로 변환.
-                    // (double?) 캐스팅으로 평점 행 0개일 때 null 반환되게 함.
-                    AverageRating = db.Ratings.Where(r => r.ToiletId == t.Id).Average(r => (double?)r.Score),
-                    CommentCount = db.Comments.Count(c => c.ToiletId == t.Id && !c.Hidden),
-                })
-                .AsSplitQuery()
-                .ToListAsync(ct);
-
-            var nowKst = OpenStatusMapper.NowKst();
-            var holidays = await OpenStatusMapper.HolidaysAroundAsync(db, nowKst, ct);
-            var results = rows.Select(t => new ToiletNearDto(
-                t.Id, t.Name, t.Kind,
-                t.RoadAddress, t.LotAddress,
-                t.Latitude, t.Longitude,
-                t.DistanceM,
-                t.MaleStallCount, t.MaleUrinalCount,
-                t.MaleAccessibleStallCount, t.MaleAccessibleUrinalCount,
-                t.MaleChildStallCount, t.MaleChildUrinalCount,
-                t.FemaleStallCount, t.FemaleAccessibleStallCount, t.FemaleChildStallCount,
-                t.OpenHours, t.OpenHoursDetail, t.Phone,
-                t.AverageRating, t.CommentCount,
-                t.KindCode, t.ScheduleStatus,
-                OpenStatusMapper.Evaluate(t.ScheduleStatus, t.Schedules, nowKst, holidays))).ToList();
-
+            var results = await LoadNearAsync(db, lat, lng, radiusM, Math.Clamp(limit ?? 1000, 1, 5000), ct);
             return Results.Ok(results);
         })
         .WithName("ListNearbyToilets")
@@ -78,6 +34,59 @@ public static class ToiletEndpoints
             `openHours`/`openHoursDetail` 원문은 하위 호환과 표시용으로 남겨 둔다.
             """)
         .Produces<IReadOnlyList<ToiletNearDto>>();
+
+        group.MapGet("/recommended", async (
+            double lat,
+            double lng,
+            double? radiusM,
+            int? limit,
+            MashilDbContext db,
+            CancellationToken ct) =>
+        {
+            var radius = Math.Clamp(radiusM ?? 1000, 100, 5000);
+            var take = Math.Clamp(limit ?? 5, 1, 20);
+            var near = await LoadNearAsync(db, lat, lng, radius, 1000, ct);
+            var ids = near.Select(t => t.Id).ToList();
+
+            var ratingCounts = await db.Ratings.Where(r => ids.Contains(r.ToiletId))
+                .GroupBy(r => r.ToiletId)
+                .Select(g => new { g.Key, Count = g.Count() })
+                .ToDictionaryAsync(x => x.Key, x => x.Count, ct);
+            // 가려지지 않은 댓글이 받은 표만 센다
+            var votes = await db.CommentVotes
+                .Join(db.Comments, v => v.CommentId, c => c.Id, (v, c) => new { v.Value, c.ToiletId, c.Hidden })
+                .Where(x => ids.Contains(x.ToiletId) && !x.Hidden)
+                .GroupBy(x => x.ToiletId)
+                .Select(g => new { g.Key, Up = g.Count(x => x.Value > 0), Down = g.Count(x => x.Value < 0) })
+                .ToDictionaryAsync(x => x.Key, ct);
+
+            var ranked = near
+                .Select(t =>
+                {
+                    var rc = ratingCounts.GetValueOrDefault(t.Id);
+                    var v = votes.GetValueOrDefault(t.Id);
+                    var up = v?.Up ?? 0;
+                    var down = v?.Down ?? 0;
+                    var score = ToiletRecommender.Score(new RecommendInput(
+                        t.DistanceM, radius, t.AverageRating, rc, up, down, t.OpenStatus.Kind));
+                    return score is null ? null : new RecommendedToiletDto(t, score.Score, rc, up, down);
+                })
+                .Where(x => x is not null)
+                .OrderByDescending(x => x!.Score)
+                .ThenBy(x => x!.Toilet.DistanceM)
+                .Take(take)
+                .ToList();
+            return Results.Ok(ranked);
+        })
+        .WithName("ListRecommendedToilets")
+        .WithSummary("지금 여기서 가기 좋은 화장실 (추천순)")
+        .WithDescription("""
+            반경(`radiusM`, 기본 1000, 100~5000) 안에서 **닫히지 않았고** 평점이나 댓글 평가가 있는 곳만,
+            점수 높은 순으로 `limit`(기본 5, 최대 20)건.
+            점수 = 품질 50% (별점 베이지안 평균) + 믿음 30% (댓글들이 받은 도움돼요 비율) + 가까움 20%.
+            열려 있는지 모르면 0.85 배. 자세한 식은 `ToiletRecommender`.
+            """)
+        .Produces<IReadOnlyList<RecommendedToiletDto>>();
 
         group.MapGet("/in-bounds", async (
             double north,
@@ -178,6 +187,56 @@ public static class ToiletEndpoints
         .WithDescription("`q` 로 `Name`, `RoadAddress`, `LotAddress` 를 OR ILIKE 매칭. 좌표 없는 행도 포함 (지도 미표시 행 검색용).")
         .Produces<IReadOnlyList<ToiletSearchDto>>();
     }
+
+    /// <summary>반경 안 화장실 (가까운 순) + 평점·댓글 집계 + 서버 영업 판정. /near 와 /recommended 가 함께 쓴다.</summary>
+    internal static async Task<List<ToiletNearDto>> LoadNearAsync(
+        MashilDbContext db, double lat, double lng, double radiusM, int take, CancellationToken ct)
+    {
+        var origin = new Point(lng, lat) { SRID = 4326 };
+
+        var rows = await db.Toilets
+            .Where(t => t.Status != ToiletStatus.Removed
+                     && t.Location != null && t.Location.IsWithinDistance(origin, radiusM))
+            .OrderBy(t => t.Location!.Distance(origin))
+            .Take(take)
+            .Select(t => new
+            {
+                t.Id, t.Name, t.Kind, t.KindCode,
+                t.RoadAddress, t.LotAddress,
+                t.Latitude, t.Longitude,
+                DistanceM = t.Location!.Distance(origin),
+                t.MaleStallCount, t.MaleUrinalCount,
+                t.MaleAccessibleStallCount, t.MaleAccessibleUrinalCount,
+                t.MaleChildStallCount, t.MaleChildUrinalCount,
+                t.FemaleStallCount, t.FemaleAccessibleStallCount, t.FemaleChildStallCount,
+                t.OpenHours, t.OpenHoursDetail, t.Phone,
+                t.ScheduleStatus,
+                Schedules = t.Schedules.Select(s => new ScheduleRow(s.DayType, s.OpenMinute, s.CloseMinute, s.IsClosed)).ToList(),
+                // 평점 / 댓글 집계 — EF 가 SELECT subquery 로 변환.
+                // (double?) 캐스팅으로 평점 행 0개일 때 null 반환되게 함.
+                AverageRating = db.Ratings.Where(r => r.ToiletId == t.Id).Average(r => (double?)r.Score),
+                CommentCount = db.Comments.Count(c => c.ToiletId == t.Id && !c.Hidden),
+            })
+            .AsSplitQuery()
+            .ToListAsync(ct);
+
+        var nowKst = OpenStatusMapper.NowKst();
+        var holidays = await OpenStatusMapper.HolidaysAroundAsync(db, nowKst, ct);
+        var results = rows.Select(t => new ToiletNearDto(
+            t.Id, t.Name, t.Kind,
+            t.RoadAddress, t.LotAddress,
+            t.Latitude, t.Longitude,
+            t.DistanceM,
+            t.MaleStallCount, t.MaleUrinalCount,
+            t.MaleAccessibleStallCount, t.MaleAccessibleUrinalCount,
+            t.MaleChildStallCount, t.MaleChildUrinalCount,
+            t.FemaleStallCount, t.FemaleAccessibleStallCount, t.FemaleChildStallCount,
+            t.OpenHours, t.OpenHoursDetail, t.Phone,
+            t.AverageRating, t.CommentCount,
+            t.KindCode, t.ScheduleStatus,
+            OpenStatusMapper.Evaluate(t.ScheduleStatus, t.Schedules, nowKst, holidays))).ToList();
+        return results;
+    }
 }
 
 /// <summary>
@@ -185,6 +244,9 @@ public static class ToiletEndpoints
 /// 시설 정보(변기 수), 영업 정보(영업시간/전화), 평점·댓글 집계까지 한 번에.
 /// <c>AverageRating</c> 은 평점 행이 없으면 null. <c>CommentCount</c> 는 hidden 제외.
 /// </summary>
+/// <summary>추천 한 건: 근처 목록과 같은 화장실 정보 + 점수와 근거 (평점 수, 댓글이 받은 도움돼요/아니에요).</summary>
+public sealed record RecommendedToiletDto(ToiletNearDto Toilet, double Score, int RatingCount, int HelpfulUp, int HelpfulDown);
+
 public sealed record ToiletNearDto(
     long Id,
     string Name,

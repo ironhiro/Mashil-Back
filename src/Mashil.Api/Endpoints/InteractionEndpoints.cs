@@ -61,14 +61,30 @@ public static class InteractionEndpoints
                 .Take(100)
                 .Join(db.UserProfiles, c => c.UserId, u => u.Id, (c, u) => new { c, u.DisplayName, u.Status })
                 .ToListAsync(ct);
+
+            // 도움돼요/아니에요 집계와 내 표
+            var ids = rows.Select(r => r.c.Id).ToList();
+            var tallies = await db.CommentVotes
+                .Where(v => ids.Contains(v.CommentId))
+                .GroupBy(v => v.CommentId)
+                .Select(g => new { g.Key, Up = g.Count(v => v.Value > 0), Down = g.Count(v => v.Value < 0) })
+                .ToDictionaryAsync(x => x.Key, ct);
+            var mine = viewer is { } me
+                ? await db.CommentVotes.Where(v => v.UserId == me && ids.Contains(v.CommentId))
+                    .ToDictionaryAsync(v => v.CommentId, v => (int)v.Value, ct)
+                : [];
+
             return Results.Ok(rows
                 .OrderByDescending(r => r.c.CreatedAt)
                 .Select(r => new CommentView(r.c.Id, r.c.ToiletId, r.c.UserId,
                     CommentAuthor.Name(r.DisplayName, r.Status), r.Status == UserStatus.Deleted,
-                    r.c.Text, r.c.Hidden, r.c.CreatedAt, r.c.UpdatedAt, viewer == r.c.UserId)));
+                    r.c.Text, r.c.Hidden, r.c.CreatedAt, r.c.UpdatedAt, viewer == r.c.UserId,
+                    tallies.TryGetValue(r.c.Id, out var tl) ? tl.Up : 0,
+                    tallies.TryGetValue(r.c.Id, out var td) ? td.Down : 0,
+                    mine.TryGetValue(r.c.Id, out var mv) ? mv : 0)));
         })
         .WithSummary("화장실 댓글 목록 (공개)")
-        .WithDescription("숨김 댓글 제외, 최신순 100건. 토큰을 보내면 내가 차단한 사용자의 댓글도 빠진다 (UGC-02). 탈퇴한 작성자는 `authorName = \"탈퇴한 사용자\"`.")
+        .WithDescription("숨김 댓글 제외, 최신순 100건. 토큰을 보내면 내가 차단한 사용자의 댓글도 빠진다 (UGC-02). 탈퇴한 작성자는 `authorName = \"탈퇴한 사용자\"`. `upCount`/`downCount` 는 도움돼요/아니에요 수, `myVote` 는 내 표 (1, -1, 0 = 없음; 토큰을 보냈을 때만).")
         .Produces<IReadOnlyList<CommentView>>();
 
         comments.MapPost("", async (
@@ -96,6 +112,52 @@ public static class InteractionEndpoints
         .Produces<Comment>(StatusCodes.Status201Created)
         .Produces(StatusCodes.Status400BadRequest)
         .Produces(StatusCodes.Status401Unauthorized);
+
+        app.MapPut("/api/comments/{commentId:long}/vote", async (
+            long commentId,
+            VoteInput input,
+            ClaimsPrincipal principal,
+            MashilDbContext db,
+            CancellationToken ct) =>
+        {
+            var userId = principal.GetUserIdOrThrow();
+            if (input.Value is < -1 or > 1)
+                return Results.BadRequest(new { error = "value must be 1, -1 or 0" });
+            var comment = await db.Comments.Where(c => c.Id == commentId && !c.Hidden)
+                .Select(c => new { c.UserId }).FirstOrDefaultAsync(ct);
+            if (comment is null) return Results.NotFound();
+            if (comment.UserId == userId)
+                return Results.BadRequest(new { error = "cannot vote on your own comment" });
+
+            var existing = await db.CommentVotes.FirstOrDefaultAsync(v => v.CommentId == commentId && v.UserId == userId, ct);
+            if (input.Value == 0)
+            {
+                if (existing is not null) db.CommentVotes.Remove(existing);
+            }
+            else if (existing is null)
+            {
+                db.CommentVotes.Add(new CommentVote { CommentId = commentId, UserId = userId, Value = (short)input.Value });
+            }
+            else
+            {
+                existing.Value = (short)input.Value;
+                existing.UpdatedAt = DateTime.UtcNow;
+            }
+            await db.SaveChangesAsync(ct);
+
+            var up = await db.CommentVotes.CountAsync(v => v.CommentId == commentId && v.Value > 0, ct);
+            var down = await db.CommentVotes.CountAsync(v => v.CommentId == commentId && v.Value < 0, ct);
+            return Results.Ok(new VoteResult(up, down, input.Value));
+        })
+        .WithTags("Comments")
+        .RequireAuthorization()
+        .RequireConsent()
+        .WithSummary("댓글 도움돼요 / 아니에요 (인증 필요)")
+        .WithDescription("`value` 1 = 도움돼요, -1 = 아니에요, 0 = 취소. 사용자당 댓글 하나에 한 표 (다시 보내면 바뀜). 자기 댓글은 400, 가려졌거나 없는 댓글은 404. 바뀐 집계를 돌려준다.")
+        .Produces<VoteResult>()
+        .Produces(StatusCodes.Status400BadRequest)
+        .Produces(StatusCodes.Status401Unauthorized)
+        .Produces(StatusCodes.Status404NotFound);
 
         var changes = app.MapGroup("/api/change-requests").WithTags("ChangeRequests");
 
@@ -198,7 +260,15 @@ public static class InteractionEndpoints
     /// <summary>댓글 목록 행. `authorDeleted` 면 작성자가 탈퇴함. `isMine` 은 토큰을 보냈을 때만 의미 있음.</summary>
     public sealed record CommentView(
         long Id, long ToiletId, Guid UserId, string AuthorName, bool AuthorDeleted,
-        string Text, bool Hidden, DateTime CreatedAt, DateTime UpdatedAt, bool IsMine);
+        string Text, bool Hidden, DateTime CreatedAt, DateTime UpdatedAt, bool IsMine,
+        int UpCount, int DownCount, int MyVote);
+
+    /// <summary>댓글 평가 페이로드.</summary>
+    /// <param name="Value">1 도움돼요 / -1 아니에요 / 0 취소.</param>
+    public sealed record VoteInput(int Value);
+
+    /// <summary>평가 뒤 집계.</summary>
+    public sealed record VoteResult(int UpCount, int DownCount, int MyVote);
 
     /// <summary>별점 페이로드.</summary>
     /// <param name="Score">1~5 정수.</param>

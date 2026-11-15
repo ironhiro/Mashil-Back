@@ -9,6 +9,7 @@ public sealed class MashilDbContext(DbContextOptions<MashilDbContext> options) :
     public DbSet<UserProfile> UserProfiles => Set<UserProfile>();
     public DbSet<Rating> Ratings => Set<Rating>();
     public DbSet<Comment> Comments => Set<Comment>();
+    public DbSet<CommentVote> CommentVotes => Set<CommentVote>();
     public DbSet<ChangeRequest> ChangeRequests => Set<ChangeRequest>();
 
     // --- 원본 보존 / 임포트 (P1) ---
@@ -227,6 +228,15 @@ public sealed class MashilDbContext(DbContextOptions<MashilDbContext> options) :
             e.HasIndex(c => new { c.ToiletId, c.Hidden });
             e.HasOne<Toilet>().WithMany().HasForeignKey(c => c.ToiletId).OnDelete(DeleteBehavior.Restrict);
             e.HasOne<UserProfile>().WithMany().HasForeignKey(c => c.UserId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        b.Entity<CommentVote>(e =>
+        {
+            e.ToTable("comment_votes", t => t.HasCheckConstraint("CK_comment_votes_Value", "\"Value\" IN (-1, 1)"));
+            e.HasKey(v => new { v.CommentId, v.UserId });
+            e.HasIndex(v => v.UserId);
+            e.HasOne<Comment>().WithMany().HasForeignKey(v => v.CommentId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne<UserProfile>().WithMany().HasForeignKey(v => v.UserId).OnDelete(DeleteBehavior.Restrict);
         });
 
         b.Entity<ChangeRequest>(e =>
