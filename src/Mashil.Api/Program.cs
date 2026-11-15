@@ -162,6 +162,8 @@ try
         app.UseSwaggerUI();
     }
 
+    // 요청마다 한 줄 (메서드, 경로, 상태, 걸린 시간). ASP.NET 내부 로그는 설정에서 Warning 으로 줄였다
+    app.UseSerilogRequestLogging();
     app.UseCors();
     app.UseAuthentication();
     app.UseAuthorization();
