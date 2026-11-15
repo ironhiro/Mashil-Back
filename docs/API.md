@@ -8,7 +8,8 @@
 
 | Method | Path | 용도 |
 |---|---|---|
-| GET | `/api/toilets/near?lat=&lng=&radiusM=&limit=` | PostGIS 근접 검색. 좌표 있는 행만, `Removed` 제외 |
+| GET | `/api/toilets/near?lat=&lng=&radiusM=&limit=` | PostGIS 근접 검색. 좌표 있는 행만, `Removed` 제외. `radiusM` 은 1~10000 으로 자른다, `limit` 1~5000 (기본 1000) |
+| GET | `/api/toilets/recommended?lat=&lng=&radiusM=&limit=` | 지금 가기 좋은 곳, 점수순. 아래 "추천" 참고 |
 | GET | `/api/toilets/in-bounds?north=&south=&east=&west=&limit=` | 지도 viewport 안 |
 | GET | `/api/toilets/search?q=&limit=` | 이름·주소 ILIKE. 위치 미확정 행도 포함 |
 | GET | `/api/toilets/{id}` | 상세 |
@@ -25,8 +26,20 @@
 | `openStatus.closesAt` | `"18:00"` | 열려 있을 때 닫는 시각 |
 | `openStatus.nextOpen` | `{ "daysFromToday": 1, "day": "Sun", "at": "09:00" }` | 닫혀 있을 때 다음 개방 |
 | `openStatus.label` | `"영업중 · 18:00까지"` | 그대로 보여 줄 수 있는 한국어 문구 |
+| `averageRating` | `4.2` | 평점 평균. 평점이 없으면 `null` |
+| `ratingCount` | `3` | 그 평균을 낸 평점 수 (2026-11-15 추가) |
+| `commentCount` | `5` | 가려지지 않은 댓글 수. 평점 수가 아니다 |
 
 > 웹의 `src/lib/openStatus.ts` (정규식 판정)는 `openStatus` 로 대체하면 된다. 정규식은 판정 불가 9.5%, 요일 무시 오답 가능 5.2%였고, 서버 판정은 판정 불가 0.2%다.
+
+### 추천 `/recommended` — 2026-11-15
+
+반경(`radiusM` 기본 1000, 100~5000) 안에서 **닫히지 않았고** 평점이나 댓글 평가가 있는 곳만, 점수 높은 순으로 `limit`(기본 5, 최대 20)건.
+
+- 점수 = 품질 50% (별점 베이지안 평균, 사전값 3.0 · 가중치 2) + 믿음 30% (댓글들이 받은 도움돼요 비율, 라플라스 평활) + 가까움 20%
+- 열려 있는지 모르면 0.85 배. 식은 `Mashil.Domain.ToiletRecommender`
+
+응답 행: `{ toilet: <near 행>, score, ratingCount, helpfulUp, helpfulDown }`
 
 ### `/{id}` 상세 — 2026-11-14 추가 필드
 
@@ -76,13 +89,23 @@
 
 | Method | Path | 비고 |
 |---|---|---|
-| POST | `/api/toilets/{toiletId}/ratings` | upsert (한 사용자당 한 점수); body: `{ score: 1..5 }` |
-| GET | `/api/toilets/{toiletId}/comments` | 숨김 제외. 토큰을 보내면 **내가 차단한 사용자 댓글도 제외** |
-| POST | `/api/toilets/{toiletId}/comments` | body: `{ text }` (최대 1000자) |
+| POST | `/api/toilets/{toiletId}/ratings` | upsert (한 사용자당 한 점수); body: `{ score: 1..5 }` → 204. 범위 밖 400, 없는 화장실 404 |
+| GET | `/api/toilets/{toiletId}/comments` | 숨김 제외, 최신순 100건. 토큰을 보내면 **내가 차단한 사용자 댓글도 제외** |
+| POST | `/api/toilets/{toiletId}/comments` | body: `{ text }` (최대 1000자) → 201 댓글 행 (목록과 같은 모양). 빈 글 400, 없는 화장실 404 |
+| PUT | `/api/comments/{id}/vote` | body: `{ value: 1\|-1\|0 }` (도움돼요 / 아니에요 / 취소) → 200 `{ upCount, downCount, myVote }`. 자기 댓글 400, 가려졌거나 없는 댓글 404 |
 
-댓글 행 (2026-11-14): `{ id, toiletId, userId, authorName, authorDeleted, text, hidden, createdAt, updatedAt, isMine }`. 탈퇴한 작성자는 `authorName = "탈퇴한 사용자"`, 이름이 없으면 `"익명"`.
+댓글 행: `{ id, toiletId, userId, authorName, authorDeleted, text, hidden, createdAt, updatedAt, isMine, upCount, downCount, myVote }`. 탈퇴한 작성자는 `authorName = "탈퇴한 사용자"`, 이름이 없으면 `"익명"`. `myVote` 는 토큰을 보냈을 때만 의미가 있다 (1, -1, 0 = 없음).
+
+같은 사람이 평점이나 표를 동시에 여러 번 보내도 한 건으로 갱신된다 (유니크 충돌이면 한 번 다시 읽어 갱신).
 
 쓰기(평점·댓글·변경 요청·신고)는 약관 동의 전이면 403 `consent_required` (`Consents:EnforceOnWrite`, 개발 환경에서는 꺼 둠).
+
+## 내 활동 (auth required) — 2026-11-15
+
+| Method | Path | 비고 |
+|---|---|---|
+| GET | `/api/me/comments` | 최신순 100건. `[{ id, toiletId, toiletName, text, hidden, createdAt, updatedAt }]`. 신고로 가려진 댓글도 `hidden = true` 로 포함 (본인에게 이유를 알리려고). 화장실이 지워졌으면 `toiletName = null` |
+| GET | `/api/me/change-requests` | 최신순 100건. `[{ id, kind, status, targetToiletId, toiletName, createdAt, reviewedAt, reviewNote }]`. 추가 요청이면 `toiletName` 은 제보에 적힌 이름 |
 
 ## Moderation (auth required) — UGC-03~05
 
@@ -116,6 +139,12 @@
 - Add: 새 화장실 (`Origin = UserSubmitted`, 관리번호 `USR-{요청 id}`)
 - 원본을 직접 고치지 않으므로 재임포트해도 유지된다
 - `approve=false` → `204`. 이미 처리된 요청 → `409`. 반영할 수 없는 내용 → `422`
+
+## 앱 상태 (public)
+
+| Method | Path | 비고 |
+|---|---|---|
+| GET | `/api/app/status` | `{ maintenance, readOnly, message, until }` (OPS-05). 캐시하지 말 것 — 점검을 끄면 바로 반영돼야 한다 |
 
 ## 헬스 체크
 

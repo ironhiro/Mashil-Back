@@ -20,8 +20,7 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" />
-    <!-- 디자인 타임 전용 (dotnet ef). 런타임 출력에 포함되지 않음.
-         전이 의존성 System.Security.Cryptography.Pkcs 9.0.0 취약점 경고(NU1902/1903)는 EF Core Design 갱신으로 해소할 것. -->
+    <!-- 디자인 타임 전용 (dotnet ef). 런타임 출력에 포함되지 않음. -->
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design" PrivateAssets="all" />
     <PackageReference Include="Serilog.AspNetCore" />
     <PackageReference Include="Swashbuckle.AspNetCore" />
