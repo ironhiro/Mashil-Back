@@ -22,6 +22,15 @@
 
     <!-- Logging -->
     <PackageVersion Include="Serilog.AspNetCore" Version="9.0.0" />
+    <!-- Worker 는 ASP.NET 런타임이 없는 이미지(runtime:10.0)라 Serilog.AspNetCore 대신 아래 조합 -->
+    <PackageVersion Include="Serilog.Extensions.Hosting" Version="10.0.0" />
+    <PackageVersion Include="Serilog.Settings.Configuration" Version="10.0.1" />
+    <PackageVersion Include="Serilog.Sinks.Console" Version="6.1.1" />
+    <PackageVersion Include="Serilog.Formatting.Compact" Version="3.0.0" />
+
+    <!-- 에러 모니터링 (NFR-10). Sentry:Dsn 이 있을 때만 켜진다 -->
+    <PackageVersion Include="Sentry.AspNetCore" Version="7.0.0" />
+    <PackageVersion Include="Sentry.Serilog" Version="7.0.0" />
 
     <!-- Swagger -->
     <PackageVersion Include="Swashbuckle.AspNetCore" Version="7.2.0" />
@@ -37,6 +46,7 @@
     <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
     <PackageVersion Include="xunit" Version="2.9.3" />
     <PackageVersion Include="xunit.runner.visualstudio" Version="3.1.4" />
+    <PackageVersion Include="Microsoft.AspNetCore.TestHost" Version="10.0.0" />
   </ItemGroup>
 
 </Project>

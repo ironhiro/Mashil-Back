@@ -106,10 +106,20 @@ dotnet run --project src/Mashil.Api
 dotnet run --project src/Mashil.Worker
 #   즉시 한 번 돌려 보려면: Import__Schedule__RunOnStartup=true
 
-# 테스트 (통합 테스트는 MASHIL_TEST_DB 가 있을 때만 실행, 임시 DB 를 만들고 지움)
+# 테스트 (단위: Mashil.Import.Tests·Mashil.Api.Tests. 통합 테스트는 MASHIL_TEST_DB 가 있을 때만 실행, 임시 DB 를 만들고 지움)
 export MASHIL_TEST_DB="Host=localhost;Port=5432;Database=postgres;Username=mashil;Password=mashil_dev"
 dotnet test
+
+# API 회귀 테스트 (Postman 컬렉션, API 를 띄운 상태에서). Postman 앱에서는 두 파일을 import 해 Runner 로 실행
+npx newman@6 run tests/postman/Mashil.postman_collection.json -e tests/postman/local.postman_environment.json
+
+# 스트레스 테스트 (k6, 로컬 API 에만). 20 → PEAK req/s 단계 증가, 약 6분
+k6 run -e PEAK=400 tests/load/mashil-load.js
 ```
+
+스트레스 테스트(`tests/load/mashil-load.js`)는 읽기 90% (근처 50, 추천 10, 상세 15, 댓글 목록 15)와 쓰기 10% (평점 5, 도움돼요 4, 댓글 1)를 섞는다. 기준: 오류 1% 미만, p95 500ms 미만. 2026-11-15 개발 PC(API·DB·k6 한 대) 기준 약 600 req/s 까지 p95 27ms, 700 req/s 부터 CPU 포화(대부분 Postgres). 테스트 계정·댓글·평점이 개발 DB 에 남는다.
+
+Postman 컬렉션(`tests/postman/`)은 실행마다 테스트 계정 둘을 새로 만들고(레거시 이메일 가입, 개발 설정에서만 켜짐) 인증·화장실·평점·댓글과 도움돼요·내 활동·제보·신고와 차단·토큰 회전을 순서대로 확인한다. 테스트 댓글·평점·제보·신고가 개발 DB 에 남으므로 운영 서버에는 돌리지 않는다. 생성 스크립트 없이 JSON 을 직접 고친다.
 
 ### 일일 갱신이 하는 일 (Mashil.Worker)
 
@@ -134,14 +144,17 @@ dotnet run --project tools/Mashil.CsvImport -- --geocode=200                # �
 
 ## 컨테이너 / 운영 배포
 
-설계는 `Mashil-app/docs/08-infrastructure.md`. 파일:
+설계는 `Mashil-app/docs/08-infrastructure.md`. **서버 준비·배포·롤백·백업·감시·점검 모드 절차는 [docs/OPERATIONS.md](docs/OPERATIONS.md).** 파일:
 
 | 파일 | 내용 |
 |---|---|
-| `Dockerfile` | 타깃 `api` / `worker` / `migrate`(EF 마이그레이션 번들) |
-| `deploy/docker-compose.prod.yml` | Caddy(443) → api-blue·api-green, worker, postgres(내부 전용), `ops` 프로필: migrate·backup |
-| `deploy/Caddyfile` | 자동 TLS, `/healthz/ready` 헬스체크 업스트림, 접근 로그에서 위치 쿼리 제거 (NFR-06) |
-| `deploy/deploy.sh` | 무중단 배포: 마이그레이션 → api-blue → api-green 한쪽씩 → worker → 스모크 |
+| `Dockerfile` | 타깃 `api` / `worker` / `migrate`(EF 마이그레이션 번들). `--build-arg GIT_SHA` → Sentry 릴리스 |
+| `.github/workflows/ci.yml` | 빌드 + 단위 + 통합(PostGIS 서비스 컨테이너) 테스트, `main` 이면 GHCR 에 이미지 3개 (`:<sha>`, `:latest`) |
+| `deploy/docker-compose.prod.yml` | Caddy(80·443) → api-blue·api-green, worker, postgres(내부 전용, 호스트 포트 없음), `ops` 프로필: migrate |
+| `deploy/Caddyfile` | 자동 TLS·HSTS·보안 헤더, `/api` 헬스체크 업스트림, 웹 SPA 정적(에셋 immutable, index no-cache), 점검 정적 폴백, 접근 로그 위치 쿼리 제거 (NFR-06) |
+| `deploy/deploy.sh` · `rollback.sh` | 무중단 배포(마이그레이션 → 한쪽씩 교체 → 스모크 → `.deployed` 기록) · 기록된 이전 이미지로 롤백 (OPS-06) |
+| `deploy/web-deploy.sh` · `web-cleanup.sh` | 웹 배포(이전 해시 에셋 7일 보존, OPS-04) · 오래된 에셋 정리 |
+| `deploy/backup.sh` · `disk-check.sh` · `cron/mashil` | pg_dump 일간 7 + 주간 4 · 디스크 경고 · 호스트 cron |
 | `deploy/.env.example` | 운영 환경 변수 템플릿 (`/etc/mashil/mashil.env`, chmod 600) |
 
 ```bash
@@ -152,6 +165,11 @@ docker run --rm -e MASHIL_DB="Host=...;Database=mashil;Username=...;Password=...
 ```
 
 API 는 `Cors:Origins`(쉼표 구분)로 허용 도메인을 받는다. 기본은 `http://localhost:5173`.
+
+운영 관련 설정 (기본값은 `src/Mashil.Api/appsettings.json`):
+- `RateLimiting:*` — IP 당 빈도 제한 (Global·Write·Auth, 429 + `Retry-After`). **개발 환경은 꺼져 있다** (`appsettings.Development.json`) — k6 를 Development 가 아닌 환경에서 돌리면 `RateLimiting__Enabled=false`.
+- `ForwardedHeaders:KnownProxies` / `KnownNetworks` — X-Forwarded-For 를 믿을 프록시 (운영 Compose 가 Caddy 대역을 넣음).
+- `Sentry:Dsn` — 있으면 API·Worker 에러를 Sentry 로 (개인정보·위치 쿼리 제외). 로그는 운영에서 콘솔 JSON, 개발에서 텍스트.
 
 CSV 는 [LOCALDATA 공중화장실정보](https://file.localdata.go.kr/file/public_restroom_info/info) 의 "전국파일" 입니다.
 응답 헤더는 UTF-8 이라고 선언하지만 실제 파일은 CP949 — 임포터가 내용으로 판별합니다.
@@ -219,11 +237,6 @@ YhLibrary 위치 외에 환경 의존 값:
 
 소스에 `D:\...` / `C:\...` 같은 absolute 경로 박지 마세요. 새로 추가할 때도 위 패턴(env/User Secrets/CLI arg) 따르세요.
 
-## YhLibrary 의존
-
-- `YhLibrary.Http.ApiClient` — Kakao Local API typed client + `RetryHandler`
-- `YhLibrary.Serialization.JsonSerializer` — DI 에 `ISerializer` 로 등록
-
 ## 좌표/주소 데이터 정책
 
 원본 CSV 행은 4가지 상태:
@@ -237,7 +250,55 @@ YhLibrary 위치 외에 환경 의존 값:
 
 Import 시 외부 API 호출하지 않음 — `GeocodeWorker` 가 백그라운드에서 큐 소비.
 
-## 라이선스 / 데이터 출처
+## 사용한 오픈소스
 
-화장실 마스터 데이터는 [공공데이터포털](https://www.data.go.kr/) 의 "공중화장실 표준데이터" 가공.
+버전은 `Directory.Packages.props` 기준 (2026-11-16). 라이선스는 각 패키지가 밝힌 것.
+
+### 런타임 (API · Worker · 임포터)
+
+| 패키지 | 버전 | 라이선스 | 쓰는 곳 |
+|---|---|---|---|
+| [.NET / ASP.NET Core](https://github.com/dotnet/aspnetcore) | 10.0 | MIT | 런타임, 웹 API |
+| [Entity Framework Core](https://github.com/dotnet/efcore) (`Microsoft.EntityFrameworkCore`, `.Relational`, `.Design`) | 10.0.15 | MIT | ORM, 마이그레이션 |
+| [Npgsql EF Core provider](https://github.com/npgsql/efcore.pg) (+ `.NetTopologySuite`) | 10.0.3 | PostgreSQL | PostgreSQL·PostGIS 연결 |
+| [NetTopologySuite](https://github.com/NetTopologySuite/NetTopologySuite) | 2.5.0 | BSD-3-Clause | 좌표·거리 계산 (근처 검색) |
+| `Microsoft.AspNetCore.Authentication.JwtBearer` | 10.0.0 | MIT | 마실 JWT 인증 |
+| `Microsoft.IdentityModel.Protocols.OpenIdConnect`, `.JsonWebTokens` | 8.0.1 | MIT | Kakao·Google·Apple ID 토큰 검증 |
+| `Microsoft.Extensions.*` (Hosting, Http, Configuration, Options) | 9.0.0 | MIT | Worker 호스트, HttpClient, 설정 |
+| [CsvHelper](https://github.com/JoshClose/CsvHelper) | 33.0.1 | MS-PL 또는 Apache-2.0 | LOCALDATA CSV 읽기 |
+| [Serilog](https://github.com/serilog/serilog) (`AspNetCore` 9.0.0, `Extensions.Hosting` 10.0.0, `Settings.Configuration` 10.0.1, `Sinks.Console` 6.1.1, `Formatting.Compact` 3.0.0) | 표 참고 | Apache-2.0 | 구조화 로그 |
+| [Sentry .NET](https://github.com/getsentry/sentry-dotnet) (`Sentry.AspNetCore`, `Sentry.Serilog`) | 7.0.0 | MIT | 오류 모니터링 (DSN 이 있을 때만) |
+| [Swashbuckle.AspNetCore](https://github.com/domaindrivendev/Swashbuckle.AspNetCore) | 7.2.0 | MIT | Swagger UI (개발 환경) |
+
+### 테스트
+
+| 패키지 | 버전 | 라이선스 | 쓰는 곳 |
+|---|---|---|---|
+| [xUnit](https://github.com/xunit/xunit) (+ `xunit.runner.visualstudio` 3.1.4) | 2.9.3 | Apache-2.0 | 단위·통합 테스트 |
+| `Microsoft.NET.Test.Sdk` | 17.14.1 | MIT | 테스트 실행 |
+| `Microsoft.AspNetCore.TestHost` | 10.0.0 | MIT | 요청 제한 테스트 (메모리 안 서버) |
+| [Newman](https://github.com/postmanlabs/newman) (`npx newman@6`, 설치하지 않음) | 6 | Apache-2.0 | Postman 컬렉션 회귀 테스트 |
+| [k6](https://github.com/grafana/k6) (따로 설치) | 2.4 | AGPL-3.0 | 스트레스 테스트 (`tests/load`). 도구로만 쓰고 배포물에 넣지 않음 |
+
+### 인프라 (컨테이너 이미지)
+
+| 이미지 | 라이선스 | 쓰는 곳 |
+|---|---|---|
+| [`postgis/postgis:16-3.4`](https://github.com/postgis/docker-postgis) | PostgreSQL (PostgreSQL), GPL-2.0 (PostGIS) | DB. 수정 없이 실행만 함 |
+| [`caddy:2.8`](https://github.com/caddyserver/caddy) | Apache-2.0 | HTTPS, 리버스 프록시, 웹 정적 파일 |
+| `mcr.microsoft.com/dotnet/{sdk,aspnet,runtime,runtime-deps}:10.0` | MIT (.NET) | 빌드·실행 이미지 |
+| GitHub Actions: `actions/checkout`·`setup-dotnet` (MIT), `docker/login-action`·`setup-buildx-action`·`build-push-action` (Apache-2.0) | 표 참고 | CI (`.github/workflows/ci.yml`) |
+
+## 데이터 · 외부 서비스
+
+오픈소스가 아니라 각 제공자의 이용 조건을 따른다.
+
+| 항목 | 쓰는 곳 | 조건 |
+|---|---|---|
+| [LOCALDATA](https://www.localdata.go.kr/) 공중화장실정보 전국파일 | 화장실 원본 데이터 (매일 갱신) | 공공데이터. 출처 표시 (화면 상세의 "출처: 공공데이터 LOCALDATA") |
+| [Kakao Local API](https://developers.kakao.com/docs/latest/ko/local/dev-guide) | 주소 → 좌표 지오코딩 | Kakao Developers 약관, 일일 호출 한도 |
+| Kakao 로그인, Google 로그인, Sign in with Apple | 소셜 로그인 토큰 검증, 탈퇴 시 연결 해제 | 각 제공자 약관 |
+
+## 라이선스
+
 코드는 사이드 프로젝트 (라이선스 미정).

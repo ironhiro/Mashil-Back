@@ -18,11 +18,45 @@ namespace Mashil.Infrastructure.Migrations
         {
 #pragma warning disable 612, 618
             modelBuilder
-                .HasAnnotation("ProductVersion", "10.0.0")
+                .HasAnnotation("ProductVersion", "10.0.15")
                 .HasAnnotation("Relational:MaxIdentifierLength", 63);
 
             NpgsqlModelBuilderExtensions.HasPostgresExtension(modelBuilder, "postgis");
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
+
+            modelBuilder.Entity("Mashil.Domain.AppStatusSetting", b =>
+                {
+                    b.Property<int>("Id")
+                        .HasColumnType("integer");
+
+                    b.Property<bool>("Maintenance")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("Message")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<bool>("ReadOnly")
+                        .HasColumnType("boolean");
+
+                    b.Property<DateTimeOffset?>("Until")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("UpdatedById")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UpdatedById");
+
+                    b.ToTable("app_status", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_app_status_singleton", "\"Id\" = 1");
+                        });
+                });
 
             modelBuilder.Entity("Mashil.Domain.AuthNonce", b =>
                 {
@@ -416,6 +450,9 @@ namespace Mashil.Infrastructure.Migrations
                         .HasColumnType("text");
 
                     b.Property<int>("MissingRows")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("NewIssues")
                         .HasColumnType("integer");
 
                     b.Property<string>("NormalizerVersion")
@@ -1132,6 +1169,14 @@ namespace Mashil.Infrastructure.Migrations
                         .HasFilter("\"IsActive\"");
 
                     b.ToTable("value_mappings", (string)null);
+                });
+
+            modelBuilder.Entity("Mashil.Domain.AppStatusSetting", b =>
+                {
+                    b.HasOne("Mashil.Domain.UserProfile", null)
+                        .WithMany()
+                        .HasForeignKey("UpdatedById")
+                        .OnDelete(DeleteBehavior.SetNull);
                 });
 
             modelBuilder.Entity("Mashil.Domain.ChangeRequest", b =>

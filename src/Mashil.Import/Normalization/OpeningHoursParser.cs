@@ -151,6 +151,15 @@ public static partial class OpeningHoursParser
             prev = t;
         }
 
+        // 「관공서의 공휴일에 관한 규정」 제2조 1호: 공휴일에는 일요일이 들어간다. 그래서 일요일 얘기가 따로 없고
+        // 요일 공통 시간도 없는데 공휴일 규칙만 있으면, 일요일은 공휴일 규칙을 따른다.
+        // 예: "(평일)08:00-23:00+(토,공휴일)09:00-23:00" → 일요일 09:00-23:00, "평일 09~18, 공휴일 휴무" → 일요일 휴무
+        if (baseSlots.Count == 0 && !closed.Contains(DayType.Sun) && !daySlots.ContainsKey(DayType.Sun))
+        {
+            if (closed.Contains(DayType.Holiday)) closed.Add(DayType.Sun);
+            else if (daySlots.TryGetValue(DayType.Holiday, out var holidaySlots)) daySlots[DayType.Sun] = [.. holidaySlots];
+        }
+
         var entries = new List<ScheduleEntry>();
         foreach (var d in Week.Append(DayType.Holiday))
         {

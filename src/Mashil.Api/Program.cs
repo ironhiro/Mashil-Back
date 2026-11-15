@@ -1,6 +1,8 @@
 using System.Text;
+using Mashil.Api.Admin;
 using Mashil.Api.Auth;
 using Mashil.Api.Endpoints;
+using Mashil.Api.Ops;
 using Mashil.Domain;
 using Mashil.Infrastructure;
 using Mashil.Infrastructure.Identity;
@@ -21,16 +23,33 @@ try
 {
     var builder = WebApplication.CreateBuilder(args);
 
+    // 운영은 콘솔 JSON 한 줄씩 (docker logs → 수집기), 개발은 사람이 읽는 텍스트. Error 이상은 Sentry 로도 (DSN 이 있을 때)
     builder.Host.UseSerilog((ctx, lc) => lc
         .ReadFrom.Configuration(ctx.Configuration)
         .Enrich.FromLogContext()
-        .WriteTo.Console());
+        .WriteToMashilConsole(ctx.HostingEnvironment)
+        .WriteToSentryIfEnabled(ctx.Configuration));
+    builder.WebHost.UseMashilSentry(builder.Configuration); // NFR-10, Sentry:Dsn 이 없으면 아무것도 안 함
+
+    // 프록시(Caddy) 뒤 클라이언트 IP + 요청 빈도 제한 (RateLimiting:*, ForwardedHeaders:*)
+    builder.Services.AddMashilForwardedHeaders(builder.Configuration);
+    builder.Services.AddMashilRateLimiting(builder.Configuration);
 
     // --- DB ---
     var connStr = builder.Configuration.GetConnectionString("Postgres")
         ?? throw new InvalidOperationException("ConnectionStrings:Postgres is not configured.");
+    // 연결 풀 기본 최대가 100 이라 Postgres max_connections(기본 100)를 API 혼자 다 채울 수 있다 (부하 테스트에서 워커·psql 이
+    // "too many clients" 로 막힘). 연결 문자열에 따로 적지 않았으면 40 으로 — 600 req/s 에서도 동시 사용은 평균 10 안팎.
+    var pool = new Npgsql.NpgsqlConnectionStringBuilder(connStr);
+    if (!connStr.Contains("Pool Size", StringComparison.OrdinalIgnoreCase) && !connStr.Contains("MaxPoolSize", StringComparison.OrdinalIgnoreCase))
+    {
+        pool.MaxPoolSize = builder.Configuration.GetValue("Database:MaxPoolSize", 40);
+        connStr = pool.ConnectionString;
+    }
 
     builder.Services.AddAppStatus(builder.Configuration); // 점검 모드 (/api/app/status)
+    builder.Services.AddAdminServices(builder.Configuration); // 관리자 데이터 작업 큐 (임포트·재정규화, ADM-05)
+    builder.Services.AddAppVersion(builder.Configuration); // 앱 버전 정책 (/api/app/version)
 
     builder.Services.AddDbContext<MashilDbContext>(opt =>
         opt.UseNpgsql(connStr, npg => npg.UseNetTopologySuite()));
@@ -162,9 +181,15 @@ try
         app.UseSwaggerUI();
     }
 
+    app.UseForwardedHeaders(); // 로그·빈도 제한보다 먼저 — 둘 다 실제 클라이언트 IP 를 봐야 한다
+
+    // 요청마다 한 줄 (메서드, 경로, 상태, 걸린 시간). ASP.NET 내부 로그는 설정에서 Warning 으로 줄였다
+    app.UseSerilogRequestLogging();
     app.UseCors();
+    app.UseMashilRateLimiting(); // 429 + Retry-After. CORS 뒤라 웹이 429 를 읽을 수 있다
     app.UseAuthentication();
     app.UseAuthorization();
+    app.UseMaintenanceWriteBlock(); // 점검 중 일반 사용자 쓰기 503 (OPS-05). 인증 뒤라 관리자는 통과
 
     // readiness: DB 까지 확인. 블루/그린 전환과 업타임 감시는 이쪽을 본다 (OPS-02)
     app.MapGet("/healthz/ready", async (MashilDbContext db, CancellationToken ct) =>
@@ -179,8 +204,10 @@ try
     app.MapAuthEndpoints();
     app.MapToiletEndpoints();
     app.MapAppEndpoints();
+    app.MapAppVersionEndpoints();
     app.MapInteractionEndpoints();
     app.MapModerationEndpoints();
+    app.MapAdminEndpoints();
     app.MapMeEndpoints();
     app.MapDevKakaoTestEndpoints(); // Development 에서만 매핑됨
     app.MapDevBridgeTestPage();     // Development 에서만 매핑됨 (Flutter 셸 브리지 시험)

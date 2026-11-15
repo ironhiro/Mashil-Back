@@ -69,3 +69,6 @@ Directory.Build.targets.user
 data/
 *.csv
 !docs/**/*.csv
+
+# 배포 기록 (서버에서 deploy.sh 가 씀)
+deploy/.deployed

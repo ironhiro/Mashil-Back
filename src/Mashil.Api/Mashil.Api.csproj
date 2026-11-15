@@ -23,6 +23,8 @@
     <!-- 디자인 타임 전용 (dotnet ef). 런타임 출력에 포함되지 않음. -->
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design" PrivateAssets="all" />
     <PackageReference Include="Serilog.AspNetCore" />
+    <PackageReference Include="Sentry.AspNetCore" />
+    <PackageReference Include="Sentry.Serilog" />
     <PackageReference Include="Swashbuckle.AspNetCore" />
   </ItemGroup>
 

@@ -37,6 +37,9 @@ public sealed class ImportRun
     /// <summary>실제로 Removed 처리된 수. 대량 삭제 보류(PendingApproval)면 0.</summary>
     public int RemovedRows { get; set; }
 
+    /// <summary>이번 실행에서 새로 생긴 정규화 이슈 수 (DATA-23). 같은 원본 값으로 다시 계산된 이슈는 세지 않는다.</summary>
+    public int NewIssues { get; set; }
+
     /// <summary>실패·거부 사유.</summary>
     public string? Message { get; set; }
 
