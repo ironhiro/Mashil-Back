@@ -19,7 +19,8 @@ namespace Mashil.Import;
 /// </summary>
 public static class ChangeRequestApplier
 {
-    private static readonly Dictionary<string, string> FieldMap = new()
+    /// <summary>payload 키 → 오버라이드 필드. 관리자 직접 수정(<see cref="Admin.ToiletAdminEditor"/>)도 같은 키를 쓴다.</summary>
+    internal static readonly IReadOnlyDictionary<string, string> FieldMap = new Dictionary<string, string>
     {
         ["name"] = OverrideFields.Name,
         ["roadAddress"] = OverrideFields.RoadAddress,

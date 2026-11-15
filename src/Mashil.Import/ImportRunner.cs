@@ -64,12 +64,7 @@ public sealed class ImportRunner(MashilDbContext db, ImportPolicy? policy = null
             ?? throw new ImportBusyException(sourceCode);
 
         var now = Now();
-        await db.ImportRuns
-            .Where(r => r.SourceId == source.Id && r.Status == ImportRunStatus.Running)
-            .ExecuteUpdateAsync(s => s
-                .SetProperty(r => r.Status, ImportRunStatus.Abandoned)
-                .SetProperty(r => r.Message, "프로세스 중단으로 정리됨 (다음 실행에서 감지)")
-                .SetProperty(r => r.FinishedAt, now), ct);
+        await AbandonStaleRunsAsync(source.Id, now, ct);
 
         var run = new ImportRun
         {
@@ -230,7 +225,7 @@ public sealed class ImportRunner(MashilDbContext db, ImportPolicy? policy = null
                 toilets[row.SourceKey] = toilet;
             }
 
-            Normalize(row, toilet, now);
+            run.NewIssues += NormalizeRow(row, toilet, _ctx, now);
             raw.Toilet = toilet;
 
             if (isNew) run.InsertedRows++;
@@ -243,52 +238,64 @@ public sealed class ImportRunner(MashilDbContext db, ImportPolicy? policy = null
         db.ImportRuns.Attach(run);
     }
 
-    /// <summary>원본 → 화장실 매핑 + 정규화 + 오버라이드, 그리고 자동 이슈 교체 (Open 만 다시 계산).</summary>
-    private void Normalize(SourceRow row, Toilet toilet, DateTime now)
+    /// <summary>
+    /// 원본 → 화장실 매핑 + 정규화 + 오버라이드, 그리고 자동 이슈 맞추기 (<see cref="IssueSync"/>).
+    /// 임포트·재정규화·관리자 직접 수정이 같은 규칙을 쓴다. 화장실은 <see cref="WithNormalizationGraph"/> 로 불러온 것이어야 한다.
+    /// </summary>
+    /// <returns>새로 생긴 이슈 수 (DATA-23).</returns>
+    public static int NormalizeRow(SourceRow row, Toilet toilet, NormalizationContext ctx, DateTime now)
     {
         var today = DateOnly.FromDateTime(now.AddHours(9));
         var (roadBefore, lotBefore) = (toilet.RoadAddress, toilet.LotAddress);
-        var drafts = LocalDataToiletMapper.Apply(row, toilet, _ctx, today);
+        var drafts = LocalDataToiletMapper.Apply(row, toilet, ctx, today);
 
-        // 정규화가 다시 계산하는 Open 이슈만 교체 (지오코딩 이슈는 GeocodingService 가 관리)
-        toilet.Issues.RemoveAll(i => i.Status == IssueStatus.Open && i.FieldName != IssueFields.Geocode);
-        foreach (var d in drafts)
-            toilet.Issues.Add(new NormalizationIssue
-            {
-                FieldName = d.Field, Type = d.Type, Severity = d.Severity, RawValue = d.RawValue, Note = d.Note, CreatedAt = now,
-            });
+        // 정규화가 다시 계산하는 Open 이슈만 맞춘다 (지오코딩 이슈는 GeocodingService 가 관리)
+        var added = IssueSync.Replace(toilet, drafts, i => i.FieldName != IssueFields.Geocode, now);
 
         // 오버라이드 적용 + 주소 변경 시 지오코딩 무효화 + 개방시간 오버라이드 재파싱
-        ToiletRecompute.AfterOverrides(toilet, roadBefore, lotBefore, _ctx, now);
+        ToiletRecompute.AfterOverrides(toilet, roadBefore, lotBefore, ctx, now);
 
         toilet.NormalizerVersion = NormalizerVersion;
         toilet.UpdatedAt = now;
+        return added;
     }
 
-    private static IQueryable<Toilet> WithNormalizationGraph(IQueryable<Toilet> q) => q
+    /// <summary>정규화에 필요한 연관 데이터. 이슈는 상태와 상관없이 불러온다 (해결·무시한 이슈를 다시 만들지 않으려고).</summary>
+    public static IQueryable<Toilet> WithNormalizationGraph(IQueryable<Toilet> q) => q
         .Include(t => t.Overrides.Where(o => o.IsActive))
         .Include(t => t.Schedules)
-        .Include(t => t.Issues.Where(i => i.Status == IssueStatus.Open))
+        .Include(t => t.Issues)
         .AsSplitQuery();
     // 주: Overrides 는 활성만 로드한다. 주소 변경 시 비활성화하는 대상도 활성 중에서만 고르므로 충분하다.
 
-    private async Task<NormalizationContext> LoadContextAsync(CancellationToken ct) =>
+    /// <summary>저장된 원본 행(raw payload) → <see cref="SourceRow"/>.</summary>
+    public static SourceRow RowOf(RawToiletRecord raw) =>
+        new(raw.SourceKey, System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string?>>(raw.PayloadJson) ?? [], 0);
+
+    private Task<NormalizationContext> LoadContextAsync(CancellationToken ct) => LoadContextAsync(db, ct);
+
+    /// <summary>활성 매핑 사전.</summary>
+    public static async Task<NormalizationContext> LoadContextAsync(MashilDbContext db, CancellationToken ct) =>
         NormalizationContext.FromMappings(await db.ValueMappings.AsNoTracking().Where(m => m.IsActive).ToListAsync(ct));
 
     /// <summary>
     /// 파일 없이 저장된 원본(raw)으로 다시 정규화한다 (DATA-14). 정규화 규칙·매핑 사전이 바뀐 뒤 사용.
     /// 누락 처리는 하지 않는다 (새 원본 정보가 없으므로).
+    /// <paramref name="toiletIds"/> 를 주면 그 화장실만 다시 정규화한다 (매핑 사전을 바꾼 직후, DATA-13).
+    /// 그중 원본이 없는 화장실(제보로 추가된 곳)은 저장된 개방시간 문장만 새 매핑으로 다시 해석한다.
     /// </summary>
-    public async Task<ImportRun> RenormalizeAsync(string sourceCode, bool onlyOutdated = false, IProgress<ImportRun>? progress = null, CancellationToken ct = default)
+    public async Task<ImportRun> RenormalizeAsync(string sourceCode, bool onlyOutdated = false, IProgress<ImportRun>? progress = null,
+        CancellationToken ct = default, IReadOnlyCollection<long>? toiletIds = null, string? label = null)
     {
         var source = await db.DataSources.AsNoTracking().SingleAsync(s => s.Code == sourceCode, ct);
         await using var importLock = await ImportLock.TryAcquireAsync(db, source.Id, ct)
             ?? throw new ImportBusyException(sourceCode);
 
         var now = Now();
+        await AbandonStaleRunsAsync(source.Id, now, ct);
         var run = new ImportRun
         {
-            SourceId = source.Id, Trigger = ImportTrigger.Renormalize, FileSha256 = "", FileName = "(raw)",
+            SourceId = source.Id, Trigger = ImportTrigger.Renormalize, FileSha256 = "", FileName = label ?? "(raw)",
             NormalizerVersion = NormalizerVersion, StartedAt = now, HeartbeatAt = now,
         };
         db.ImportRuns.Add(run);
@@ -297,12 +304,14 @@ public sealed class ImportRunner(MashilDbContext db, ImportPolicy? policy = null
         try
         {
             _ctx = await LoadContextAsync(ct);
+            var scope = toiletIds?.Distinct().ToList();
+            var covered = new HashSet<long>();
             long lastId = 0;
             while (true)
             {
-                var raws = await db.RawToiletRecords
-                    .Where(r => r.SourceId == source.Id && r.Id > lastId && r.ToiletId != null)
-                    .OrderBy(r => r.Id).Take(BatchSize).ToListAsync(ct);
+                var rawQuery = db.RawToiletRecords.Where(r => r.SourceId == source.Id && r.Id > lastId && r.ToiletId != null);
+                if (scope is not null) rawQuery = rawQuery.Where(r => scope.Contains(r.ToiletId!.Value));
+                var raws = await rawQuery.OrderBy(r => r.Id).Take(BatchSize).ToListAsync(ct);
                 if (raws.Count == 0) break;
                 lastId = raws[^1].Id;
 
@@ -315,9 +324,9 @@ public sealed class ImportRunner(MashilDbContext db, ImportPolicy? policy = null
                 foreach (var raw in raws)
                 {
                     run.TotalRows++;
+                    covered.Add(raw.ToiletId!.Value);
                     if (!toilets.TryGetValue(raw.ToiletId!.Value, out var toilet)) { run.UnchangedRows++; continue; }
-                    var fields = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string?>>(raw.PayloadJson) ?? [];
-                    Normalize(new SourceRow(raw.SourceKey, fields, 0), toilet, batchNow);
+                    run.NewIssues += NormalizeRow(RowOf(raw), toilet, _ctx, batchNow);
                     run.UpdatedRows++;
                 }
 
@@ -327,6 +336,9 @@ public sealed class ImportRunner(MashilDbContext db, ImportPolicy? policy = null
                 db.ImportRuns.Attach(run);
                 progress?.Report(run);
             }
+
+            if (scope is not null)
+                await ReparseHoursWithoutRawAsync(scope.Where(id => !covered.Contains(id)).ToList(), run, ct);
             run.Status = ImportRunStatus.Succeeded;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -340,6 +352,38 @@ public sealed class ImportRunner(MashilDbContext db, ImportPolicy? policy = null
         db.ImportRuns.Update(run);
         await db.SaveChangesAsync(CancellationToken.None);
         return run;
+    }
+
+    /// <summary>락을 잡은 상태에서 남아 있는 Running 실행은 죽은 프로세스의 것이므로 Abandoned 로 정리한다.</summary>
+    private Task<int> AbandonStaleRunsAsync(int sourceId, DateTime now, CancellationToken ct) =>
+        db.ImportRuns
+            .Where(r => r.SourceId == sourceId && r.Status == ImportRunStatus.Running)
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(r => r.Status, ImportRunStatus.Abandoned)
+                .SetProperty(r => r.Message, "프로세스 중단으로 정리됨 (다음 실행에서 감지)")
+                .SetProperty(r => r.FinishedAt, now), ct);
+
+    /// <summary>원본이 없는 화장실(제보로 추가)은 저장된 개방시간 문장을 새 매핑 사전으로 다시 해석한다.</summary>
+    private async Task ReparseHoursWithoutRawAsync(List<long> ids, ImportRun run, CancellationToken ct)
+    {
+        foreach (var chunk in ids.Chunk(BatchSize))
+        {
+            var now = Now();
+            var toilets = await WithNormalizationGraph(db.Toilets).Where(t => chunk.Contains(t.Id)).ToListAsync(ct);
+            foreach (var t in toilets)
+            {
+                run.TotalRows++;
+                var drafts = new List<IssueDraft>();
+                LocalDataToiletMapper.ApplyHours(t, OpeningHoursParser.Parse(t.OpenHours, t.OpenHoursDetail, _ctx.For(IssueFields.OpeningHours)), drafts);
+                run.NewIssues += IssueSync.Replace(t, drafts, i => i.FieldName == IssueFields.OpeningHours, now);
+                t.NormalizerVersion = NormalizerVersion;
+                t.UpdatedAt = now;
+                run.UpdatedRows++;
+            }
+            await db.SaveChangesAsync(ct);
+            db.ChangeTracker.Clear();
+            db.ImportRuns.Attach(run);
+        }
     }
 
     private DateTime Now() => _clock.GetUtcNow().UtcDateTime;

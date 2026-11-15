@@ -3,6 +3,7 @@
 #   docker build --target worker  -t mashil-worker .
 #   docker build --target migrate -t mashil-migrate .   # 배포 파이프라인에서 1회 실행 (OPS-03)
 # 빌드 컨텍스트는 저장소 루트. 외부 저장소(YhLibrary) 의존 없음.
+# CI 는 --build-arg GIT_SHA=<커밋> 을 넘긴다 → Sentry 릴리스(SENTRY_RELEASE)와 이미지 라벨.
 
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
@@ -29,10 +30,13 @@ RUN dotnet tool restore \
 
 # --- API ---
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS api
+ARG GIT_SHA=dev
+LABEL org.opencontainers.image.revision=$GIT_SHA
 WORKDIR /app
 COPY --from=build /out/api .
 ENV ASPNETCORE_HTTP_PORTS=8080 \
-    DOTNET_gcServer=0
+    DOTNET_gcServer=0 \
+    SENTRY_RELEASE=mashil-api@$GIT_SHA
 EXPOSE 8080
 USER app
 # 헬스체크는 Caddy 가 /healthz/ready 로 한다 (이미지에 curl 없음)
@@ -40,14 +44,19 @@ ENTRYPOINT ["dotnet", "Mashil.Api.dll"]
 
 # --- Worker (단일 인스턴스) ---
 FROM mcr.microsoft.com/dotnet/runtime:10.0 AS worker
+ARG GIT_SHA=dev
+LABEL org.opencontainers.image.revision=$GIT_SHA
 WORKDIR /app
 COPY --from=build /out/worker .
-ENV DOTNET_ENVIRONMENT=Production
+ENV DOTNET_ENVIRONMENT=Production \
+    SENTRY_RELEASE=mashil-worker@$GIT_SHA
 USER app
 ENTRYPOINT ["dotnet", "Mashil.Worker.dll"]
 
 # --- 마이그레이션 실행기 ---
 FROM mcr.microsoft.com/dotnet/runtime-deps:10.0 AS migrate
+ARG GIT_SHA=dev
+LABEL org.opencontainers.image.revision=$GIT_SHA
 WORKDIR /app
 COPY --from=bundle /out/efbundle ./efbundle
 USER app

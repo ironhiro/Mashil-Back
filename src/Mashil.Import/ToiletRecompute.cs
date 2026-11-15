@@ -47,9 +47,7 @@ public static class ToiletRecompute
         {
             var drafts = new List<IssueDraft>();
             LocalDataToiletMapper.ApplyHours(t, OpeningHoursParser.Parse(t.OpenHours, t.OpenHoursDetail, ctx.For(IssueFields.OpeningHours)), drafts);
-            t.Issues.RemoveAll(i => i.Status == IssueStatus.Open && i.FieldName == IssueFields.OpeningHours);
-            foreach (var d in drafts)
-                t.Issues.Add(new NormalizationIssue { FieldName = d.Field, Type = d.Type, Severity = d.Severity, RawValue = d.RawValue, Note = d.Note, CreatedAt = now });
+            IssueSync.Replace(t, drafts, i => i.FieldName == IssueFields.OpeningHours, now);
         }
     }
 }

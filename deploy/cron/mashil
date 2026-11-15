@@ -1,0 +1,13 @@
+# /etc/cron.d/mashil — sudo cp deploy/cron/mashil /etc/cron.d/mashil (root 소유, 644)
+# 서버 시간대는 Asia/Seoul 로 둔다 (sudo timedatectl set-timezone Asia/Seoul). Ubuntu cron 은 CRON_TZ 를 지원하지 않음.
+# 저장소 체크아웃 위치가 /opt/mashil 이 아니면 경로를 고친다.
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+MASHIL_ENV_FILE=/etc/mashil/mashil.env
+
+# DB 백업 — 매일 03:00 (Worker 일일 임포트 04:30 전)
+0 3 * * *   root  /opt/mashil/deploy/backup.sh      >> /var/log/mashil/backup.log 2>&1
+# 웹 이전 빌드 정리 — 7일 지난 해시 에셋 (OPS-04)
+30 3 * * *  root  /opt/mashil/deploy/web-cleanup.sh >> /var/log/mashil/web-cleanup.log 2>&1
+# 디스크 80% 경고
+15 * * * *  root  /opt/mashil/deploy/disk-check.sh  >> /var/log/mashil/disk-check.log 2>&1

@@ -84,6 +84,28 @@ public static class MissingRecordProcessor
         return removed;
     }
 
+    /// <summary>
+    /// 보류된 삭제를 관리자가 거부. 대상의 연속 누락 횟수를 0으로 되돌려 Removed 로 바꾸지 않는다 (Missing 표시는 유지,
+    /// 원본에 다시 나타나면 Active). 계속 빠져 있으면 기준 횟수만큼 더 누락된 뒤 다시 후보가 된다.
+    /// </summary>
+    public static async Task<int> RejectPendingRemovalsAsync(MashilDbContext db, long runId, ImportPolicy policy, CancellationToken ct)
+    {
+        var run = await db.ImportRuns.SingleAsync(r => r.Id == runId, ct);
+        if (run.Status != ImportRunStatus.PendingApproval)
+            throw new InvalidOperationException($"run #{runId} 는 승인 대기 상태가 아닙니다 ({run.Status})");
+
+        var candidateIds = RemovalCandidates(db, run.SourceId, policy).Select(t => t.Id);
+        var reset = await db.RawToiletRecords
+            .Where(r => r.SourceId == run.SourceId && r.ToiletId != null && candidateIds.Contains(r.ToiletId!.Value))
+            .ExecuteUpdateAsync(s => s.SetProperty(r => r.ConsecutiveMissing, 0), ct);
+
+        run.RemovedRows = 0;
+        run.Status = ImportRunStatus.Succeeded;
+        run.Message = $"관리자가 삭제를 거부함: 대상 {reset:N0}건의 연속 누락 횟수를 되돌림 (Missing 유지)";
+        await db.SaveChangesAsync(ct);
+        return reset;
+    }
+
     private static IQueryable<Toilet> RemovalCandidates(MashilDbContext db, int sourceId, ImportPolicy policy) =>
         db.Toilets
             .Where(t => t.Status != ToiletStatus.Removed && t.Origin == ToiletOrigin.PublicData)

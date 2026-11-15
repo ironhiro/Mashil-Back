@@ -1,0 +1,112 @@
+# 백엔드 CI (08-infrastructure §4)
+#   모든 push·PR: 빌드 + 단위 테스트 + 통합 테스트 (PostGIS 서비스 컨테이너, MASHIL_TEST_DB)
+#   main push: 이미지 3개(api·worker·migrate)를 GHCR 에 올림. 태그 = git sha + latest. 인증은 GITHUB_TOKEN 만.
+# 서버 배포는 여기서 하지 않는다 — 서버에서 deploy/deploy.sh <sha> (docs/OPERATIONS.md).
+name: ci
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgis/postgis:16-3.4
+        env:
+          POSTGRES_USER: mashil
+          POSTGRES_PASSWORD: mashil_ci
+          POSTGRES_DB: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U mashil -d postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DOTNET_NOLOGO: "1"
+      DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+      # 통합 테스트가 테스트마다 임시 DB 를 만들고 지운다 (tests/Mashil.Import.IntegrationTests/TestDatabase.cs)
+      MASHIL_TEST_DB: Host=localhost;Port=5432;Database=postgres;Username=mashil;Password=mashil_ci
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Restore
+        run: dotnet restore Mashil.slnx
+
+      - name: Build
+        run: dotnet build Mashil.slnx -c Release --no-restore
+
+      - name: Unit tests
+        run: |
+          dotnet test tests/Mashil.Import.Tests -c Release --no-build --logger "trx;LogFileName=unit-import.trx" --results-directory TestResults
+          dotnet test tests/Mashil.Api.Tests -c Release --no-build --logger "trx;LogFileName=unit-api.trx" --results-directory TestResults
+
+      - name: Integration tests (PostGIS)
+        run: dotnet test tests/Mashil.Import.IntegrationTests -c Release --no-build --logger "trx;LogFileName=integration.trx" --results-directory TestResults
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: TestResults/*.trx
+          retention-days: 14
+
+  images:
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: true
+      matrix:
+        target: [api, worker, migrate]
+    steps:
+      - uses: actions/checkout@v5
+
+      # GHCR 이미지 이름은 소문자여야 한다
+      - name: Image name
+        id: img
+        run: echo "name=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/mashil-${{ matrix.target }}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: ${{ matrix.target }}
+          push: true
+          build-args: GIT_SHA=${{ github.sha }}
+          tags: |
+            ${{ steps.img.outputs.name }}:${{ github.sha }}
+            ${{ steps.img.outputs.name }}:latest
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha,scope=${{ matrix.target }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.target }}

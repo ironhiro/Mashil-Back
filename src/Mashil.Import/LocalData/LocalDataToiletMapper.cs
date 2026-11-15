@@ -113,10 +113,14 @@ public static class LocalDataToiletMapper
 
     internal static int Int(string? s) => int.TryParse(s?.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var n) && n >= 0 ? n : 0;
 
-    internal static bool? YesNo(string? s) => s?.Trim() switch
+    /// <summary>
+    /// 예·아니오 값 (DATA-06). 지금 전국파일은 Y/N 만 쓰지만, 다른 소스나 원본 형식 변화에 대비해 흔한 변형도 받는다.
+    /// 모르는 값은 null (정보 없음) — 결과가 같으므로 정규화 버전은 올리지 않았다.
+    /// </summary>
+    internal static bool? YesNo(string? s) => s?.Trim().ToUpperInvariant() switch
     {
-        "Y" or "y" => true,
-        "N" or "n" => false,
+        "Y" or "YES" or "O" or "예" or "유" or "있음" or "설치" or "해당" or "1" or "TRUE" => true,
+        "N" or "NO" or "X" or "아니오" or "아니요" or "무" or "없음" or "미설치" or "해당없음" or "비해당" or "0" or "FALSE" => false,
         _ => null,
     };
 

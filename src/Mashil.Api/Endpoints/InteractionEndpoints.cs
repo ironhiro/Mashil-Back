@@ -232,11 +232,16 @@ public static class InteractionEndpoints
             var query = db.ChangeRequests.AsQueryable();
             if (status is not null) query = query.Where(c => c.Status == status);
             var list = await query.OrderByDescending(c => c.CreatedAt).Take(200).ToListAsync(ct);
-            return Results.Ok(list);
+            // 승인한 요청이 실제로 남긴 것 (ADM-01): 오버라이드 필드 / 새 화장실 / Removed 표시
+            var outcomes = await Mashil.Import.Admin.AdminReports.ChangeRequestOutcomesAsync(
+                db, list.Where(c => c.Status == ChangeRequestStatus.Approved).Select(c => c.Id).ToList(), ct);
+            return Results.Ok(list.Select(c => new AdminChangeRequestRow(
+                c.Id, c.RequesterId, c.TargetToiletId, c.Kind, c.PayloadJson, c.Status, c.ReviewedById, c.ReviewedAt, c.ReviewNote, c.CreatedAt,
+                outcomes.GetValueOrDefault(c.Id))));
         })
         .WithSummary("변경 요청 큐 조회 (관리자)")
-        .WithDescription("`status` 필터 (`Pending` / `Approved` / `Rejected`) — 생략 시 전체. 최신순 200건. `Admin` 역할 필요.")
-        .Produces<IReadOnlyList<ChangeRequest>>()
+        .WithDescription("`status` 필터 (`Pending` / `Approved` / `Rejected`) — 생략 시 전체. 최신순 200건. `Admin` 역할 필요. 승인된 요청은 `applied` 에 반영 결과 (`toiletId`, 새 화장실이면 `createdToilet`, 삭제면 `markedRemoved`, 오버라이드 `fields` 와 지금도 쓰이는 `activeFields`).")
+        .Produces<IReadOnlyList<AdminChangeRequestRow>>()
         .Produces(StatusCodes.Status401Unauthorized)
         .Produces(StatusCodes.Status403Forbidden);
 
@@ -294,6 +299,12 @@ public static class InteractionEndpoints
     }
 
     public const int MaxCommentLength = 1000;
+
+    /// <summary>관리자 변경 요청 큐의 행. <see cref="ChangeRequest"/> 와 같은 필드 + 승인 반영 결과.</summary>
+    public sealed record AdminChangeRequestRow(
+        long Id, Guid RequesterId, long? TargetToiletId, ChangeRequestKind Kind, string PayloadJson, ChangeRequestStatus Status,
+        Guid? ReviewedById, DateTime? ReviewedAt, string? ReviewNote, DateTime CreatedAt,
+        Mashil.Import.Admin.ChangeRequestOutcome? Applied);
 
     private static bool IsUniqueViolation(DbUpdateException ex) =>
         ex.InnerException is PostgresException { SqlState: PostgresErrorCodes.UniqueViolation };

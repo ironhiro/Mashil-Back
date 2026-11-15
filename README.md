@@ -106,7 +106,7 @@ dotnet run --project src/Mashil.Api
 dotnet run --project src/Mashil.Worker
 #   즉시 한 번 돌려 보려면: Import__Schedule__RunOnStartup=true
 
-# 테스트 (통합 테스트는 MASHIL_TEST_DB 가 있을 때만 실행, 임시 DB 를 만들고 지움)
+# 테스트 (단위: Mashil.Import.Tests·Mashil.Api.Tests. 통합 테스트는 MASHIL_TEST_DB 가 있을 때만 실행, 임시 DB 를 만들고 지움)
 export MASHIL_TEST_DB="Host=localhost;Port=5432;Database=postgres;Username=mashil;Password=mashil_dev"
 dotnet test
 
@@ -144,14 +144,17 @@ dotnet run --project tools/Mashil.CsvImport -- --geocode=200                # �
 
 ## 컨테이너 / 운영 배포
 
-설계는 `Mashil-app/docs/08-infrastructure.md`. 파일:
+설계는 `Mashil-app/docs/08-infrastructure.md`. **서버 준비·배포·롤백·백업·감시·점검 모드 절차는 [docs/OPERATIONS.md](docs/OPERATIONS.md).** 파일:
 
 | 파일 | 내용 |
 |---|---|
-| `Dockerfile` | 타깃 `api` / `worker` / `migrate`(EF 마이그레이션 번들) |
-| `deploy/docker-compose.prod.yml` | Caddy(443) → api-blue·api-green, worker, postgres(내부 전용), `ops` 프로필: migrate·backup |
-| `deploy/Caddyfile` | 자동 TLS, `/healthz/ready` 헬스체크 업스트림, 접근 로그에서 위치 쿼리 제거 (NFR-06) |
-| `deploy/deploy.sh` | 무중단 배포: 마이그레이션 → api-blue → api-green 한쪽씩 → worker → 스모크 |
+| `Dockerfile` | 타깃 `api` / `worker` / `migrate`(EF 마이그레이션 번들). `--build-arg GIT_SHA` → Sentry 릴리스 |
+| `.github/workflows/ci.yml` | 빌드 + 단위 + 통합(PostGIS 서비스 컨테이너) 테스트, `main` 이면 GHCR 에 이미지 3개 (`:<sha>`, `:latest`) |
+| `deploy/docker-compose.prod.yml` | Caddy(80·443) → api-blue·api-green, worker, postgres(내부 전용, 호스트 포트 없음), `ops` 프로필: migrate |
+| `deploy/Caddyfile` | 자동 TLS·HSTS·보안 헤더, `/api` 헬스체크 업스트림, 웹 SPA 정적(에셋 immutable, index no-cache), 점검 정적 폴백, 접근 로그 위치 쿼리 제거 (NFR-06) |
+| `deploy/deploy.sh` · `rollback.sh` | 무중단 배포(마이그레이션 → 한쪽씩 교체 → 스모크 → `.deployed` 기록) · 기록된 이전 이미지로 롤백 (OPS-06) |
+| `deploy/web-deploy.sh` · `web-cleanup.sh` | 웹 배포(이전 해시 에셋 7일 보존, OPS-04) · 오래된 에셋 정리 |
+| `deploy/backup.sh` · `disk-check.sh` · `cron/mashil` | pg_dump 일간 7 + 주간 4 · 디스크 경고 · 호스트 cron |
 | `deploy/.env.example` | 운영 환경 변수 템플릿 (`/etc/mashil/mashil.env`, chmod 600) |
 
 ```bash
@@ -162,6 +165,11 @@ docker run --rm -e MASHIL_DB="Host=...;Database=mashil;Username=...;Password=...
 ```
 
 API 는 `Cors:Origins`(쉼표 구분)로 허용 도메인을 받는다. 기본은 `http://localhost:5173`.
+
+운영 관련 설정 (기본값은 `src/Mashil.Api/appsettings.json`):
+- `RateLimiting:*` — IP 당 빈도 제한 (Global·Write·Auth, 429 + `Retry-After`). **개발 환경은 꺼져 있다** (`appsettings.Development.json`) — k6 를 Development 가 아닌 환경에서 돌리면 `RateLimiting__Enabled=false`.
+- `ForwardedHeaders:KnownProxies` / `KnownNetworks` — X-Forwarded-For 를 믿을 프록시 (운영 Compose 가 Caddy 대역을 넣음).
+- `Sentry:Dsn` — 있으면 API·Worker 에러를 Sentry 로 (개인정보·위치 쿼리 제외). 로그는 운영에서 콘솔 JSON, 개발에서 텍스트.
 
 CSV 는 [LOCALDATA 공중화장실정보](https://file.localdata.go.kr/file/public_restroom_info/info) 의 "전국파일" 입니다.
 응답 헤더는 UTF-8 이라고 선언하지만 실제 파일은 CP949 — 임포터가 내용으로 판별합니다.

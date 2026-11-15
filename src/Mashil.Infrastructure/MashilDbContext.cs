@@ -35,6 +35,9 @@ public sealed class MashilDbContext(DbContextOptions<MashilDbContext> options) :
     public DbSet<CommentReport> CommentReports => Set<CommentReport>();
     public DbSet<UserBlock> UserBlocks => Set<UserBlock>();
 
+    // 점검 모드 (ADM-06)
+    public DbSet<AppStatusSetting> AppStatusSettings => Set<AppStatusSetting>();
+
     protected override void OnModelCreating(ModelBuilder b)
     {
         b.HasPostgresExtension("postgis");
@@ -313,6 +316,15 @@ public sealed class MashilDbContext(DbContextOptions<MashilDbContext> options) :
             e.HasOne<UserProfile>().WithMany().HasForeignKey(o => o.CreatedById).OnDelete(DeleteBehavior.Restrict);
             // 소스당 필드별 활성 오버라이드는 1건
             e.HasIndex(o => new { o.ToiletId, o.FieldName, o.Source }).IsUnique().HasFilter("\"IsActive\"");
+        });
+
+        b.Entity<AppStatusSetting>(e =>
+        {
+            e.ToTable("app_status", t => t.HasCheckConstraint("CK_app_status_singleton", "\"Id\" = 1"));
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).ValueGeneratedNever();
+            e.Property(x => x.Message).HasMaxLength(500);
+            e.HasOne<UserProfile>().WithMany().HasForeignKey(x => x.UpdatedById).OnDelete(DeleteBehavior.SetNull);
         });
     }
 }

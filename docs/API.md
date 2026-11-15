@@ -11,7 +11,7 @@
 | GET | `/api/toilets/near?lat=&lng=&radiusM=&limit=` | PostGIS 근접 검색. 좌표 있는 행만, `Removed` 제외. `radiusM` 은 1~10000 으로 자른다, `limit` 1~5000 (기본 1000) |
 | GET | `/api/toilets/recommended?lat=&lng=&radiusM=&limit=` | 지금 가기 좋은 곳, 점수순. 아래 "추천" 참고 |
 | GET | `/api/toilets/in-bounds?north=&south=&east=&west=&limit=` | 지도 viewport 안 |
-| GET | `/api/toilets/search?q=&limit=` | 이름·주소 ILIKE. 위치 미확정 행도 포함 |
+| GET | `/api/toilets/search?q=&limit=&lat=&lng=` | 이름·주소 ILIKE. 위치 미확정 행도 포함. `lat`·`lng` 를 주면 가까운 순(위치 미확정은 뒤), 없으면 이름순 |
 | GET | `/api/toilets/{id}` | 상세 |
 
 ### `/near` 응답 행 — 2026-11-14 추가 필드
@@ -48,7 +48,8 @@
 | `kindCode`, `status`, `scheduleStatus`, `openStatus` | 위와 같음. `status` = `Active` / `Missing` / `Removed` |
 | `schedules[]` | `{ day: "Mon".."Sun"\|"Holiday", open: "06:00", close: "22:00", closed: false }` — 요일별, 같은 요일에 여러 칸 가능(점심 분할) |
 | `facilities` | 변기 수 9종 + `emergencyBell`, `entranceCctv`, `diaperChanger` |
-| `source` | `{ provider: "LOCALDATA", dataReferenceDate, coordinateSource, editedByPeople }` — 출처 표시 (MAP-07). `editedByPeople` = 관리자 수정·승인된 변경 요청이 반영됨 |
+| `source` | `{ provider: "LOCALDATA", dataReferenceDate, coordinateSource, editedByPeople, lastRefreshedAt }` — 출처 표시 (MAP-07). `editedByPeople` = 관리자 수정·승인된 변경 요청이 반영됨. `lastRefreshedAt` = 원본을 마지막으로 받아 반영·확인한 시각 (UTC, 2026-11-15 추가) |
+| `averageRating`, `ratingCount` | 평점 평균(없으면 null)과 평점 수 — 2026-11-15 추가 |
 
 ## Auth — 2026-11-14 OAuth 전환 (P4)
 
@@ -128,9 +129,9 @@
 
 | Method | Path | 비고 |
 |---|---|---|
-| GET | `/api/admin/change-requests?status=Pending` | 큐 조회 |
+| GET | `/api/admin/change-requests?status=Pending` | 큐 조회. 승인된 행은 `applied: { toiletId, createdToilet, markedRemoved, fields, activeFields }` (ADM-01, 2026-11-15) |
 | PATCH | `/api/admin/change-requests/{id}` | body: `{ approve: bool, note? }` |
-| GET | `/api/admin/comment-reports?status=Open` | 댓글별로 묶은 신고 큐, 신고 수 순 (ADM-02) |
+| GET | `/api/admin/comment-reports?status=Open` | 댓글별로 묶은 신고 큐, 신고 수 순 (ADM-02). 행마다 `toiletName`, `authorName`, 신고 내용 `details`(최근 5개) |
 | PATCH | `/api/admin/comments/{id}` | body: `{ hidden: bool }`. 숨기면 열린 신고 Actioned, 복원하면 Dismissed |
 
 **승인 반영 (2026-11-14 구현):** `approve=true` 면 같은 트랜잭션에서 화장실에 반영하고 `200 { toiletId, appliedFields, ignoredKeys }`.
@@ -140,11 +141,45 @@
 - 원본을 직접 고치지 않으므로 재임포트해도 유지된다
 - `approve=false` → `204`. 이미 처리된 요청 → `409`. 반영할 수 없는 내용 → `422`
 
+### 데이터 운영 — 2026-11-15 (ADM-03~06)
+
+| Method | Path | 비고 |
+|---|---|---|
+| GET | `/api/admin/import-runs?limit=50` | 임포트 실행 이력, 최신순. 행마다 신규·변경·동일·누락·복귀·삭제(대상)·`newIssues` (DATA-23) |
+| GET | `/api/admin/import-runs/{id}` | 실행 리포트 `{ run, newIssuesByType }` |
+| POST | `/api/admin/import-runs/upload` | 파일 업로드 임포트 (DATA-19). `multipart/form-data`: `file`, 선택 `force=true`, `skipValidation=true`. **202** + 작업 |
+| POST | `/api/admin/import-runs/fetch` | 지금 내려받아 임포트 (일일 갱신 한 번). body 선택 `{ force, skipValidation }`. 202 + 작업 |
+| POST | `/api/admin/import-runs/renormalize` | 재정규화 (DATA-14). body 선택 `{ onlyOutdated }`. 202 + 작업 |
+| POST | `/api/admin/import-runs/{id}/approve-removals` | 보류된 대량 삭제 승인 (DATA-15). `{ count }` |
+| POST | `/api/admin/import-runs/{id}/reject-removals` | 거부: 삭제하지 않고 대상의 연속 누락 횟수를 0으로 (Missing 유지). `{ count }` |
+| GET | `/api/admin/jobs` · `/api/admin/jobs/{id}` | 관리자 작업 (이 API 인스턴스의 최근 50건). `state` = Queued / Running / Succeeded / Failed / Busy, 결과 `runId` |
+| GET | `/api/admin/normalization/report` | 정규화 리포트 (DATA-16): 필드별 성공률 + Open 이슈 상위 원본 값 50개 |
+| GET | `/api/admin/issues?field=&type=&status=&rawValue=&toiletId=&offset=&limit=` | 정규화 이슈 목록 `{ total, items }` (DATA-12) |
+| GET | `/api/admin/issues/groups?field=&type=&status=Open` | 같은 (필드, 유형, 원본 값) 묶음, 건수 순 |
+| GET | `/api/admin/issues/counts` | 필드·유형·상태별 건수 |
+| POST | `/api/admin/issues/bulk` | body `{ status: "Resolved"\|"Ignored"\|"Open", ids? , fieldName?, type?, rawValue?, toiletId?, fromStatus? }`. `{ count }` |
+| GET | `/api/admin/value-mappings?field=&includeInactive=` | 매핑 사전 |
+| POST | `/api/admin/value-mappings` | 매핑 등록 (DATA-13). body `{ fieldName: "opening_hours", rawKey, hours: { status, entries: [{ day, open, close, closed }] } }`. 응답 `{ mapping, issuesChanged, affectedToilets, job }` |
+| DELETE | `/api/admin/value-mappings/{id}` | 매핑 해제. 이 매핑으로 해결된 이슈는 다시 Open, 대상 화장실 재정규화 |
+| GET | `/api/admin/toilets/{id}` | 편집 화면: 지금 값, 원본 값, 오버라이드 이력(꺼진 것 포함), 변경 요청 (ADM-04) |
+| POST | `/api/admin/toilets/{id}/overrides` | 직접 수정. 바꿀 필드만: `name`, `roadAddress`, `lotAddress`, `phone`, `openHours`, `openHoursDetail`, `latitude`+`longitude`, `status`(`Active`\|`Removed`). `null` = 그 필드의 관리자 오버라이드 끄기. `{ toiletId, appliedFields, clearedFields, ignoredKeys }` |
+| DELETE | `/api/admin/toilets/{id}/overrides/{overrideId}` | 오버라이드 하나 끄기 (출처 상관없음). 204 |
+| GET | `/api/admin/app-status` | 점검 모드 `{ effective, stored, config }` (ADM-06) |
+| PUT | `/api/admin/app-status` | body `{ maintenance, readOnly, message?, until? }` |
+
+- **오버라이드 우선순위:** 관리자(30) > 변경 요청(20) > 지오코딩(10) > 이전 좌표(5) > 원본. 관리자 수정은 저장 뒤 원본부터 다시 계산하므로 끄면 다음 순위나 원본 값으로 돌아간다.
+- **해결·무시한 이슈는 다시 생기지 않는다:** 재임포트·재정규화가 같은 (필드, 유형, 원본 값)의 이슈를 다시 만들지 않는다. 다시 나온 Open 이슈는 같은 행(id, 접수 시각)을 유지한다. 그래서 실행 시간 안에 생긴 이슈 = 새 이슈.
+- **매핑 사전:** 지금 매핑을 읽는 필드는 개방시간뿐이다. 키는 개방시간 이슈의 원본 값(`개방시간|개방시간상세`, 공백 정리). 등록·해제하면 대상 화장실의 정규화 버전을 비우고 백그라운드로 그 화장실만 다시 정규화한다 (작업이 끊겨도 "재정규화 (바뀐 것만)"이나 다음 임포트가 처리).
+- **긴 작업 (업로드·다운로드·재정규화):** API 프로세스 안의 단일 소비자 큐(`AdminJobRunner`)에서 실행하고 요청은 바로 `202`. 임포트와 같은 advisory lock 으로 Worker 의 일일 갱신·다른 인스턴스와 겹치지 않는다 — 시작할 때 락이 잡혀 있으면 `409 import_busy`, 실행 시점에 잡혀 있으면 작업 `Busy` (매핑 반영은 1분 뒤 다시 시도). 작업 상태는 그 인스턴스 메모리에만 있고 결과는 `import_runs` 에 남는다. API 를 재배포하면 진행 중이던 작업은 끊기지만 실행 행은 다음 실행이 Abandoned 로 정리하고, 임포트·재정규화는 멱등이라 다시 시키면 같은 결과가 된다.
+
 ## 앱 상태 (public)
 
 | Method | Path | 비고 |
 |---|---|---|
-| GET | `/api/app/status` | `{ maintenance, readOnly, message, until }` (OPS-05). 캐시하지 말 것 — 점검을 끄면 바로 반영돼야 한다 |
+| GET | `/api/app/status` | `{ maintenance, readOnly, message, until }` (OPS-05). 캐시하지 말 것 — 점검을 끄면 바로 반영돼야 한다. 값은 관리자 화면(DB `app_status`) + 설정 `App:Status` 폴백 (설정에서 켠 플래그는 DB 와 상관없이 켜짐, 비상 스위치). 서버는 `App:Status:CacheSeconds`(기본 5초) 캐시 |
+
+**점검 중 쓰기 차단 (OPS-05, 2026-11-15):** `maintenance` 나 `readOnly` 가 켜져 있으면 `/api` 아래 POST·PUT·PATCH·DELETE 는 `503 { error: "maintenance", maintenance, readOnly, message, until }` (+ `Retry-After`). 조회는 그대로. `/api/auth`·`/api/admin` 과 관리자 계정의 요청은 막지 않는다.
+| GET | `/api/app/version?platform=ios\|android` | `{ minimum, latest, storeUrl }` (APP-09). 앱 버전이 minimum 보다 낮으면 강제, latest 보다 낮으면 권장 업데이트. 설정 `App:Versions:{Ios,Android}` — 예: `App__Versions__Android__Latest=1.2.0`. 모르는 platform 은 400 |
 
 ## 헬스 체크
 

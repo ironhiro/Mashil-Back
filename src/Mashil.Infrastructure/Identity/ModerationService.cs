@@ -11,7 +11,8 @@ public enum BlockOutcome { Blocked, Self, NotFound }
 
 public sealed record ReportQueueItem(
     long CommentId, long ToiletId, Guid AuthorId, string Text, bool Hidden,
-    int OpenReports, int TotalReports, IReadOnlyDictionary<ReportReason, int> Reasons, DateTime LastReportedAt);
+    int OpenReports, int TotalReports, IReadOnlyDictionary<ReportReason, int> Reasons, DateTime LastReportedAt,
+    string? ToiletName = null, string? AuthorName = null, IReadOnlyList<string>? Details = null);
 
 /// <summary>댓글 신고·사용자 차단·관리자 숨김 (UGC-03~05, SD-07, Apple 1.2).</summary>
 public sealed class ModerationService(MashilDbContext db, IOptions<ModerationOptions> options, TimeProvider time)
@@ -100,7 +101,13 @@ public sealed class ModerationService(MashilDbContext db, IOptions<ModerationOpt
 
         var comments = await db.Comments.Where(c => commentIds.Contains(c.Id)).ToDictionaryAsync(c => c.Id, ct);
         var all = await db.CommentReports.Where(r => commentIds.Contains(r.CommentId))
-            .Select(r => new { r.CommentId, r.Reason, r.Status, r.CreatedAt }).ToListAsync(ct);
+            .Select(r => new { r.CommentId, r.Reason, r.Status, r.CreatedAt, r.Detail }).ToListAsync(ct);
+        // 관리자 화면에서 바로 판단할 수 있게 화장실 이름, 작성자 이름, 신고자가 적은 내용
+        var toiletIds = comments.Values.Select(c => c.ToiletId).Distinct().ToList();
+        var toiletNames = await db.Toilets.Where(t => toiletIds.Contains(t.Id)).ToDictionaryAsync(t => t.Id, t => t.Name, ct);
+        var authorIds = comments.Values.Select(c => c.UserId).Distinct().ToList();
+        var authors = await db.UserProfiles.Where(u => authorIds.Contains(u.Id))
+            .ToDictionaryAsync(u => u.Id, u => u.Status == UserStatus.Deleted ? UserProfile.DeletedDisplayName : u.DisplayName, ct);
 
         return commentIds.Where(comments.ContainsKey).Select(id =>
         {
@@ -109,7 +116,9 @@ public sealed class ModerationService(MashilDbContext db, IOptions<ModerationOpt
             return new ReportQueueItem(id, c.ToiletId, c.UserId, c.Text, c.Hidden,
                 mine.Count(r => r.Status == ReportStatus.Open), mine.Count,
                 mine.GroupBy(r => r.Reason).ToDictionary(g => g.Key, g => g.Count()),
-                mine.Max(r => r.CreatedAt));
+                mine.Max(r => r.CreatedAt),
+                toiletNames.GetValueOrDefault(c.ToiletId), authors.GetValueOrDefault(c.UserId),
+                mine.Where(r => r.Detail != null).OrderByDescending(r => r.CreatedAt).Select(r => r.Detail!).Take(5).ToList());
         }).ToList();
     }
 }

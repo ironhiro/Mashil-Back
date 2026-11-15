@@ -133,10 +133,18 @@ public static class ToiletEndpoints
                     t.EmergencyBellInstalled, t.EntranceCctv, t.DiaperChangerAvailable,
                     t.DataReferenceDate,
                     EditedByPeople = t.Overrides.Any(o => o.IsActive && (o.Source == OverrideSource.Admin || o.Source == OverrideSource.ChangeRequest)),
+                    AverageRating = db.Ratings.Where(r => r.ToiletId == t.Id).Average(r => (double?)r.Score),
+                    RatingCount = db.Ratings.Count(r => r.ToiletId == t.Id),
                 })
                 .AsSplitQuery()
                 .FirstOrDefaultAsync(ct);
             if (x is null) return Results.NotFound();
+
+            // 마지막 갱신일 (MAP-07): 원본을 마지막으로 받아 확인한 때. 같은 파일이라 건너뛴 실행도 "확인함"으로 친다
+            var lastRefreshedAt = await db.ImportRuns
+                .Where(r => r.Trigger != ImportTrigger.Renormalize
+                         && (r.Status == ImportRunStatus.Succeeded || r.Status == ImportRunStatus.Skipped || r.Status == ImportRunStatus.PendingApproval))
+                .MaxAsync(r => r.FinishedAt, ct);
 
             var nowKst = OpenStatusMapper.NowKst();
             var holidays = await OpenStatusMapper.HolidaysAroundAsync(db, nowKst, ct);
@@ -151,27 +159,39 @@ public static class ToiletEndpoints
                 new FacilitiesDto(x.MaleStallCount, x.MaleUrinalCount, x.MaleAccessibleStallCount, x.MaleAccessibleUrinalCount,
                     x.MaleChildStallCount, x.MaleChildUrinalCount, x.FemaleStallCount, x.FemaleAccessibleStallCount, x.FemaleChildStallCount,
                     x.EmergencyBellInstalled, x.EntranceCctv, x.DiaperChangerAvailable),
-                new SourceInfoDto("LOCALDATA", x.DataReferenceDate, x.CoordinateSource, x.EditedByPeople)));
+                new SourceInfoDto("LOCALDATA", x.DataReferenceDate, x.CoordinateSource, x.EditedByPeople, lastRefreshedAt),
+                x.AverageRating, x.RatingCount));
         })
         .WithName("GetToilet")
         .WithSummary("화장실 단건 상세")
         .WithDescription("""
             `id` 가 없으면 404. 상세 화면과 변경 요청 폼 prefill 에 쓴다.
-            `schedules` 는 요일별 개방 시간대(공휴일 포함), `openStatus` 는 서버(KST) 판정, `source` 는 출처 표시(MAP-07).
+            `schedules` 는 요일별 개방 시간대(공휴일 포함), `openStatus` 는 서버(KST) 판정, `source` 는 출처 표시(MAP-07, 마지막 갱신 시각 포함), `averageRating`·`ratingCount` 는 평점 평균과 수.
             (NetTopologySuite `Point` 타입은 System.Text.Json 기본 직렬화 미지원이라 풀 엔티티 대신 DTO 사용.)
             """)
         .Produces<ToiletDetailDto>()
         .Produces(StatusCodes.Status404NotFound);
 
-        group.MapGet("/search", async (string q, int? limit, MashilDbContext db, CancellationToken ct) =>
+        group.MapGet("/search", async (string q, int? limit, double? lat, double? lng, MashilDbContext db, CancellationToken ct) =>
         {
             var take = Math.Clamp(limit ?? 50, 1, 200);
             var like = $"%{q}%";
-            var results = await db.Toilets
+            var matches = db.Toilets
                 .Where(t => t.Status != ToiletStatus.Removed
                          && (EF.Functions.ILike(t.Name, like)
                              || (t.RoadAddress != null && EF.Functions.ILike(t.RoadAddress, like))
-                             || (t.LotAddress != null && EF.Functions.ILike(t.LotAddress, like))))
+                             || (t.LotAddress != null && EF.Functions.ILike(t.LotAddress, like))));
+            // 위치를 주면 가까운 곳부터 (위치 미확정 행은 뒤로). 없으면 이름순
+            if (lat is { } la && lng is { } ln && la is >= -90 and <= 90 && ln is >= -180 and <= 180)
+            {
+                var origin = new Point(ln, la) { SRID = 4326 };
+                matches = matches.OrderBy(t => t.Location == null).ThenBy(t => t.Location!.Distance(origin));
+            }
+            else
+            {
+                matches = matches.OrderBy(t => t.Name).ThenBy(t => t.Id);
+            }
+            var results = await matches
                 .Take(take)
                 .Select(t => new ToiletSearchDto(
                     t.Id, t.Name,
@@ -182,7 +202,7 @@ public static class ToiletEndpoints
         })
         .WithName("SearchToilets")
         .WithSummary("이름/주소 텍스트 검색 (ILIKE)")
-        .WithDescription("`q` 로 `Name`, `RoadAddress`, `LotAddress` 를 OR ILIKE 매칭. 좌표 없는 행도 포함 (지도 미표시 행 검색용).")
+        .WithDescription("`q` 로 `Name`, `RoadAddress`, `LotAddress` 를 OR ILIKE 매칭. 좌표 없는 행도 포함 (지도 미표시 행 검색용). `lat`·`lng` 를 주면 가까운 순(좌표 없는 행은 뒤), 없으면 이름순.")
         .Produces<IReadOnlyList<ToiletSearchDto>>();
     }
 
@@ -315,7 +335,9 @@ public sealed record ToiletDetailDto(
     IReadOnlyList<ScheduleDto> Schedules,
     OpenStatusDto OpenStatus,
     FacilitiesDto Facilities,
-    SourceInfoDto Source);
+    SourceInfoDto Source,
+    double? AverageRating,
+    int RatingCount);
 
 /// <summary>시설 수와 편의시설.</summary>
 public sealed record FacilitiesDto(
@@ -323,5 +345,8 @@ public sealed record FacilitiesDto(
     int MaleChildStall, int MaleChildUrinal, int FemaleStall, int FemaleAccessibleStall, int FemaleChildStall,
     bool? EmergencyBell, bool? EntranceCctv, bool? DiaperChanger);
 
-/// <summary>출처 표시 (MAP-07). <c>EditedByPeople</c> = 관리자 수정이나 승인된 변경 요청이 반영됨.</summary>
-public sealed record SourceInfoDto(string Provider, DateOnly? DataReferenceDate, CoordinateSource CoordinateSource, bool EditedByPeople);
+/// <summary>
+/// 출처 표시 (MAP-07). <c>EditedByPeople</c> = 관리자 수정이나 승인된 변경 요청이 반영됨.
+/// <c>LastRefreshedAt</c> = 원본 파일을 마지막으로 받아 반영·확인한 시각 (UTC, 임포트 기록이 없으면 null).
+/// </summary>
+public sealed record SourceInfoDto(string Provider, DateOnly? DataReferenceDate, CoordinateSource CoordinateSource, bool EditedByPeople, DateTime? LastRefreshedAt);

@@ -48,4 +48,22 @@ public class NormalizerTests
         Assert.Equal(ToiletKind.Other, code);
         Assert.Equal(IssueType.UnknownCode, issue!.Type);
     }
+
+    [Theory]
+    [InlineData("Y", true)]
+    [InlineData(" y ", true)]
+    [InlineData("예", true)]
+    [InlineData("유", true)]
+    [InlineData("O", true)]
+    [InlineData("설치", true)]
+    [InlineData("N", false)]
+    [InlineData("아니오", false)]
+    [InlineData("무", false)]
+    [InlineData("x", false)]
+    [InlineData("미설치", false)]
+    [InlineData("", null)]
+    [InlineData(null, null)]
+    [InlineData("모름", null)]
+    public void YesNo_accepts_common_variants(string? raw, bool? expected) =>
+        Assert.Equal(expected, Mashil.Import.LocalData.LocalDataToiletMapper.YesNo(raw));
 }
