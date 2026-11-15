@@ -7,6 +7,9 @@ namespace Mashil.Api.Endpoints;
 
 public static class ToiletEndpoints
 {
+    /// <summary>검색 결과 전체 수를 담는 응답 헤더.</summary>
+    public const string TotalCountHeader = "X-Total-Count";
+
     /// <summary>`/near` 반경 상한 (미터). 웹의 가장 큰 선택지 10km 와 같다.</summary>
     public const double MaxNearRadiusM = 10_000;
 
@@ -172,15 +175,18 @@ public static class ToiletEndpoints
         .Produces<ToiletDetailDto>()
         .Produces(StatusCodes.Status404NotFound);
 
-        group.MapGet("/search", async (string q, int? limit, double? lat, double? lng, MashilDbContext db, CancellationToken ct) =>
+        group.MapGet("/search", async (string q, int? limit, int? offset, double? lat, double? lng, MashilDbContext db, HttpResponse response, CancellationToken ct) =>
         {
             var take = Math.Clamp(limit ?? 50, 1, 200);
+            var skip = Math.Max(offset ?? 0, 0);
             var like = $"%{q}%";
             var matches = db.Toilets
                 .Where(t => t.Status != ToiletStatus.Removed
                          && (EF.Functions.ILike(t.Name, like)
                              || (t.RoadAddress != null && EF.Functions.ILike(t.RoadAddress, like))
                              || (t.LotAddress != null && EF.Functions.ILike(t.LotAddress, like))));
+            // 맞는 곳 전체 수. 목록은 limit 만큼씩 끊어 주므로 화면이 "N곳 중 몇 곳" 과 "더 보기" 를 그릴 수 있게 헤더로 준다
+            response.Headers[TotalCountHeader] = (await matches.CountAsync(ct)).ToString(System.Globalization.CultureInfo.InvariantCulture);
             // 위치를 주면 가까운 곳부터 (위치 미확정 행은 뒤로). 없으면 이름순
             if (lat is { } la && lng is { } ln && la is >= -90 and <= 90 && ln is >= -180 and <= 180)
             {
@@ -192,6 +198,7 @@ public static class ToiletEndpoints
                 matches = matches.OrderBy(t => t.Name).ThenBy(t => t.Id);
             }
             var results = await matches
+                .Skip(skip)
                 .Take(take)
                 .Select(t => new ToiletSearchDto(
                     t.Id, t.Name,
@@ -202,7 +209,7 @@ public static class ToiletEndpoints
         })
         .WithName("SearchToilets")
         .WithSummary("이름/주소 텍스트 검색 (ILIKE)")
-        .WithDescription("`q` 로 `Name`, `RoadAddress`, `LotAddress` 를 OR ILIKE 매칭. 좌표 없는 행도 포함 (지도 미표시 행 검색용). `lat`·`lng` 를 주면 가까운 순(좌표 없는 행은 뒤), 없으면 이름순.")
+        .WithDescription("`q` 로 `Name`, `RoadAddress`, `LotAddress` 를 OR ILIKE 매칭. 좌표 없는 행도 포함 (지도 미표시 행 검색용). `lat`·`lng` 를 주면 가까운 순(좌표 없는 행은 뒤), 없으면 이름순. `limit`(기본 50, 최대 200)·`offset` 으로 나눠 받고, 맞는 곳 전체 수는 `X-Total-Count` 헤더.")
         .Produces<IReadOnlyList<ToiletSearchDto>>();
     }
 

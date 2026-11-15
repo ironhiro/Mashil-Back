@@ -110,24 +110,32 @@ public class OpeningHoursParserTests
     public void Scheduled_cases(string? openHours, string? detail, string expected) =>
         Assert.Equal(expected, Describe(OpeningHoursParser.Parse(openHours, detail)));
 
-    public static TheoryData<string?, string?, string> PartialCases => new()
+    public static TheoryData<string?, string?, string> WeekdayOnlyCases => new()
     {
-        { "정시", "(평일) 09:00-18:00", string.Format(Wk, "09:00-18:00") },
-        { "정시", "(평일)09:00~18:00", string.Format(Wk, "09:00-18:00") },
-        { "정시", "평일 09:00~18:00", string.Format(Wk, "09:00-18:00") },
-        { "정시", "월~금 09시~18시", string.Format(Wk, "09:00-18:00") },
-        { "정시", "09:00-16:00/월~금", string.Format(Wk, "09:00-16:00") },
-        { "정시", "평일9시간(09:00~18:00)", string.Format(Wk, "09:00-18:00") },
+        { "정시", "(평일) 09:00-18:00", string.Format(Wk, "09:00-18:00") + " Sat:휴 Sun:휴" },
+        { "정시", "(평일)09:00~18:00", string.Format(Wk, "09:00-18:00") + " Sat:휴 Sun:휴" },
+        { "정시", "평일 09:00~18:00", string.Format(Wk, "09:00-18:00") + " Sat:휴 Sun:휴" },
+        { "정시", "월~금 09시~18시", string.Format(Wk, "09:00-18:00") + " Sat:휴 Sun:휴" },
+        { "정시", "09:00-16:00/월~금", string.Format(Wk, "09:00-16:00") + " Sat:휴 Sun:휴" },
+        { "정시", "평일9시간(09:00~18:00)", string.Format(Wk, "09:00-18:00") + " Sat:휴 Sun:휴" },
+        // 공휴일 규칙은 그대로 둔다 (일요일은 공휴일 규칙을 따름)
+        { "정시", "평일 09:00~18:00, 공휴일 10:00~16:00", string.Format(Wk, "09:00-18:00") + " Sat:휴 Sun:10:00-16:00 Holiday:10:00-16:00" },
     };
 
     [Theory]
-    [MemberData(nameof(PartialCases))]
-    public void Partial_schedule_flags_issue(string? openHours, string? detail, string expected)
+    [MemberData(nameof(WeekdayOnlyCases))]
+    public void Weekday_only_schedule_closes_the_weekend(string? openHours, string? detail, string expected)
     {
         var o = OpeningHoursParser.Parse(openHours, detail);
         Assert.Equal(expected, Describe(o));
-        Assert.Equal(IssueType.Partial, o.Issue);
+        Assert.Null(o.Issue);
     }
+
+    [Theory]
+    [InlineData("정시", "월,수,금 09:00~18:00")]
+    [InlineData("정시", "평일 09:00~18:00, 토요일 09:00~13:00")]
+    public void Partial_schedule_flags_issue(string? openHours, string? detail) =>
+        Assert.Equal(IssueType.Partial, OpeningHoursParser.Parse(openHours, detail).Issue);
 
     [Theory]
     [InlineData("정시", "9시간", IssueType.DurationOnly)]

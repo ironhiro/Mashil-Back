@@ -123,7 +123,8 @@ try
     builder.Services.AddCors(o => o.AddDefaultPolicy(p => p
         .WithOrigins(corsOrigins)
         .AllowAnyHeader()
-        .AllowAnyMethod()));
+        .AllowAnyMethod()
+        .WithExposedHeaders(Mashil.Api.Endpoints.ToiletEndpoints.TotalCountHeader)));
 
     // --- OpenAPI ---
     builder.Services.AddEndpointsApiExplorer();
