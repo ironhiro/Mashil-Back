@@ -26,7 +26,7 @@ public sealed class ImportRunner(MashilDbContext db, ImportPolicy? policy = null
     /// 화장실 행의 버전이 이보다 낮으면 원본이 그대로여도 다시 정규화한다.
     /// 0.2.0: 개방시간 구조화, 구분 코드, 전화번호 표기, 이상치 이슈 (P2)
     /// </summary>
-    public const string NormalizerVersion = "0.2.0";
+    public const string NormalizerVersion = "0.2.1"; // 0.2.1: 일요일 정보가 없으면 공휴일 규칙을 따름
 
     private NormalizationContext _ctx = NormalizationContext.Empty;
 
