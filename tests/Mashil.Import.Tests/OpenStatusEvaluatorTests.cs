@@ -59,8 +59,15 @@ public class OpenStatusEvaluatorTests
     [Fact]
     public void Partial_schedule_is_unknown_on_missing_day()
     {
-        var s = OpenStatusEvaluator.Evaluate(ScheduleStatus.Scheduled, Schedules("정시", "(평일)09:00~18:00"), SatMorning);
+        var s = OpenStatusEvaluator.Evaluate(ScheduleStatus.Scheduled, Schedules("정시", "월,수,금 09:00~18:00"), SatMorning);
         Assert.Equal(OpenStatusKind.Unknown, s.Kind);
+    }
+
+    [Fact]
+    public void Weekday_only_schedule_is_closed_on_saturday()
+    {
+        var s = OpenStatusEvaluator.Evaluate(ScheduleStatus.Scheduled, Schedules("정시", "(평일)09:00~18:00"), SatMorning);
+        Assert.Equal(OpenStatusKind.Closed, s.Kind);
     }
 
     [Theory]
