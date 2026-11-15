@@ -64,6 +64,17 @@ public class OpenStatusEvaluatorTests
     }
 
     [Fact]
+    public void Weekday_only_schedule_is_closed_on_a_weekday_public_holiday()
+    {
+        // 2026-09-24 (목) 추석 연휴
+        var chuseok = new DateTime(2026, 9, 24, 11, 0, 0);
+        var s = OpenStatusEvaluator.Evaluate(ScheduleStatus.Scheduled, Schedules("정시", "평일 09:00~18:00"), chuseok, d => d == new DateOnly(2026, 9, 24));
+        Assert.Equal(OpenStatusKind.Closed, s.Kind);
+        // 다음 날도 연휴가 아니라면 (판정은 isHoliday 대로) 금요일 09:00 에 연다
+        Assert.Equal(new NextOpening(1, DayType.Fri, 9 * 60), s.NextOpen);
+    }
+
+    [Fact]
     public void Weekday_only_schedule_is_closed_on_saturday()
     {
         var s = OpenStatusEvaluator.Evaluate(ScheduleStatus.Scheduled, Schedules("정시", "(평일)09:00~18:00"), SatMorning);

@@ -164,12 +164,13 @@ public static partial class OpeningHoursParser
             else if (daySlots.TryGetValue(DayType.Holiday, out var holidaySlots)) daySlots[DayType.Sun] = [.. holidaySlots];
         }
 
-        // 평일 시간만 있으면 주말은 휴무로 본다 (관공서·회사 건물 화장실이 대부분 이렇다). 예: "평일 09:00~18:00", "월~금 09시~18시".
-        // 일요일은 위에서 공휴일 규칙을 따랐으면 그대로 둔다. 공휴일 자체는 정하지 않는다 (적힌 대로, 없으면 그 요일 시간).
+        // 평일 시간만 있으면 토·일과 법정공휴일(public_holidays)은 휴무로 본다 (관공서·회사 건물 화장실이 대부분 이렇다).
+        // 예: "평일 09:00~18:00", "월~금 09시~18시". 공휴일 규칙이 적혀 있으면 그것을 따른다 (일요일도 위에서 그 규칙을 따름).
         if (weekdayOnly)
         {
             closed.Add(DayType.Sat);
             if (!daySlots.ContainsKey(DayType.Sun)) closed.Add(DayType.Sun);
+            if (!daySlots.ContainsKey(DayType.Holiday)) closed.Add(DayType.Holiday);
         }
 
         var entries = new List<ScheduleEntry>();
