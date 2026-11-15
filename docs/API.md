@@ -11,7 +11,7 @@
 | GET | `/api/toilets/near?lat=&lng=&radiusM=&limit=` | PostGIS 근접 검색. 좌표 있는 행만, `Removed` 제외. `radiusM` 은 1~10000 으로 자른다, `limit` 1~5000 (기본 1000) |
 | GET | `/api/toilets/recommended?lat=&lng=&radiusM=&limit=` | 지금 가기 좋은 곳, 점수순. 아래 "추천" 참고 |
 | GET | `/api/toilets/in-bounds?north=&south=&east=&west=&limit=` | 지도 viewport 안 |
-| GET | `/api/toilets/search?q=&limit=&lat=&lng=` | 이름·주소 ILIKE. 위치 미확정 행도 포함. `lat`·`lng` 를 주면 가까운 순(위치 미확정은 뒤), 없으면 이름순 |
+| GET | `/api/toilets/search?q=&limit=&offset=&lat=&lng=` | 이름·주소 ILIKE. 위치 미확정 행도 포함. `lat`·`lng` 를 주면 가까운 순(위치 미확정은 뒤), 없으면 이름순. `limit`(기본 50, 최대 200)·`offset` 으로 나눠 받고, 맞는 곳 전체 수는 응답 헤더 `X-Total-Count` |
 | GET | `/api/toilets/{id}` | 상세 |
 
 ### `/near` 응답 행 — 2026-11-14 추가 필드
