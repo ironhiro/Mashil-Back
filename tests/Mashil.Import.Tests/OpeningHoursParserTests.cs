@@ -112,12 +112,12 @@ public class OpeningHoursParserTests
 
     public static TheoryData<string?, string?, string> WeekdayOnlyCases => new()
     {
-        { "정시", "(평일) 09:00-18:00", string.Format(Wk, "09:00-18:00") + " Sat:휴 Sun:휴" },
-        { "정시", "(평일)09:00~18:00", string.Format(Wk, "09:00-18:00") + " Sat:휴 Sun:휴" },
-        { "정시", "평일 09:00~18:00", string.Format(Wk, "09:00-18:00") + " Sat:휴 Sun:휴" },
-        { "정시", "월~금 09시~18시", string.Format(Wk, "09:00-18:00") + " Sat:휴 Sun:휴" },
-        { "정시", "09:00-16:00/월~금", string.Format(Wk, "09:00-16:00") + " Sat:휴 Sun:휴" },
-        { "정시", "평일9시간(09:00~18:00)", string.Format(Wk, "09:00-18:00") + " Sat:휴 Sun:휴" },
+        { "정시", "(평일) 09:00-18:00", string.Format(Wk, "09:00-18:00") + " Sat:휴 Sun:휴 Holiday:휴" },
+        { "정시", "(평일)09:00~18:00", string.Format(Wk, "09:00-18:00") + " Sat:휴 Sun:휴 Holiday:휴" },
+        { "정시", "평일 09:00~18:00", string.Format(Wk, "09:00-18:00") + " Sat:휴 Sun:휴 Holiday:휴" },
+        { "정시", "월~금 09시~18시", string.Format(Wk, "09:00-18:00") + " Sat:휴 Sun:휴 Holiday:휴" },
+        { "정시", "09:00-16:00/월~금", string.Format(Wk, "09:00-16:00") + " Sat:휴 Sun:휴 Holiday:휴" },
+        { "정시", "평일9시간(09:00~18:00)", string.Format(Wk, "09:00-18:00") + " Sat:휴 Sun:휴 Holiday:휴" },
         // 공휴일 규칙은 그대로 둔다 (일요일은 공휴일 규칙을 따름)
         { "정시", "평일 09:00~18:00, 공휴일 10:00~16:00", string.Format(Wk, "09:00-18:00") + " Sat:휴 Sun:10:00-16:00 Holiday:10:00-16:00" },
     };
