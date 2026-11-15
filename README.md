@@ -237,11 +237,6 @@ YhLibrary 위치 외에 환경 의존 값:
 
 소스에 `D:\...` / `C:\...` 같은 absolute 경로 박지 마세요. 새로 추가할 때도 위 패턴(env/User Secrets/CLI arg) 따르세요.
 
-## YhLibrary 의존
-
-- `YhLibrary.Http.ApiClient` — Kakao Local API typed client + `RetryHandler`
-- `YhLibrary.Serialization.JsonSerializer` — DI 에 `ISerializer` 로 등록
-
 ## 좌표/주소 데이터 정책
 
 원본 CSV 행은 4가지 상태:
@@ -255,7 +250,55 @@ YhLibrary 위치 외에 환경 의존 값:
 
 Import 시 외부 API 호출하지 않음 — `GeocodeWorker` 가 백그라운드에서 큐 소비.
 
-## 라이선스 / 데이터 출처
+## 사용한 오픈소스
 
-화장실 마스터 데이터는 [공공데이터포털](https://www.data.go.kr/) 의 "공중화장실 표준데이터" 가공.
+버전은 `Directory.Packages.props` 기준 (2026-11-16). 라이선스는 각 패키지가 밝힌 것.
+
+### 런타임 (API · Worker · 임포터)
+
+| 패키지 | 버전 | 라이선스 | 쓰는 곳 |
+|---|---|---|---|
+| [.NET / ASP.NET Core](https://github.com/dotnet/aspnetcore) | 10.0 | MIT | 런타임, 웹 API |
+| [Entity Framework Core](https://github.com/dotnet/efcore) (`Microsoft.EntityFrameworkCore`, `.Relational`, `.Design`) | 10.0.15 | MIT | ORM, 마이그레이션 |
+| [Npgsql EF Core provider](https://github.com/npgsql/efcore.pg) (+ `.NetTopologySuite`) | 10.0.3 | PostgreSQL | PostgreSQL·PostGIS 연결 |
+| [NetTopologySuite](https://github.com/NetTopologySuite/NetTopologySuite) | 2.5.0 | BSD-3-Clause | 좌표·거리 계산 (근처 검색) |
+| `Microsoft.AspNetCore.Authentication.JwtBearer` | 10.0.0 | MIT | 마실 JWT 인증 |
+| `Microsoft.IdentityModel.Protocols.OpenIdConnect`, `.JsonWebTokens` | 8.0.1 | MIT | Kakao·Google·Apple ID 토큰 검증 |
+| `Microsoft.Extensions.*` (Hosting, Http, Configuration, Options) | 9.0.0 | MIT | Worker 호스트, HttpClient, 설정 |
+| [CsvHelper](https://github.com/JoshClose/CsvHelper) | 33.0.1 | MS-PL 또는 Apache-2.0 | LOCALDATA CSV 읽기 |
+| [Serilog](https://github.com/serilog/serilog) (`AspNetCore` 9.0.0, `Extensions.Hosting` 10.0.0, `Settings.Configuration` 10.0.1, `Sinks.Console` 6.1.1, `Formatting.Compact` 3.0.0) | 표 참고 | Apache-2.0 | 구조화 로그 |
+| [Sentry .NET](https://github.com/getsentry/sentry-dotnet) (`Sentry.AspNetCore`, `Sentry.Serilog`) | 7.0.0 | MIT | 오류 모니터링 (DSN 이 있을 때만) |
+| [Swashbuckle.AspNetCore](https://github.com/domaindrivendev/Swashbuckle.AspNetCore) | 7.2.0 | MIT | Swagger UI (개발 환경) |
+
+### 테스트
+
+| 패키지 | 버전 | 라이선스 | 쓰는 곳 |
+|---|---|---|---|
+| [xUnit](https://github.com/xunit/xunit) (+ `xunit.runner.visualstudio` 3.1.4) | 2.9.3 | Apache-2.0 | 단위·통합 테스트 |
+| `Microsoft.NET.Test.Sdk` | 17.14.1 | MIT | 테스트 실행 |
+| `Microsoft.AspNetCore.TestHost` | 10.0.0 | MIT | 요청 제한 테스트 (메모리 안 서버) |
+| [Newman](https://github.com/postmanlabs/newman) (`npx newman@6`, 설치하지 않음) | 6 | Apache-2.0 | Postman 컬렉션 회귀 테스트 |
+| [k6](https://github.com/grafana/k6) (따로 설치) | 2.4 | AGPL-3.0 | 스트레스 테스트 (`tests/load`). 도구로만 쓰고 배포물에 넣지 않음 |
+
+### 인프라 (컨테이너 이미지)
+
+| 이미지 | 라이선스 | 쓰는 곳 |
+|---|---|---|
+| [`postgis/postgis:16-3.4`](https://github.com/postgis/docker-postgis) | PostgreSQL (PostgreSQL), GPL-2.0 (PostGIS) | DB. 수정 없이 실행만 함 |
+| [`caddy:2.8`](https://github.com/caddyserver/caddy) | Apache-2.0 | HTTPS, 리버스 프록시, 웹 정적 파일 |
+| `mcr.microsoft.com/dotnet/{sdk,aspnet,runtime,runtime-deps}:10.0` | MIT (.NET) | 빌드·실행 이미지 |
+| GitHub Actions: `actions/checkout`·`setup-dotnet` (MIT), `docker/login-action`·`setup-buildx-action`·`build-push-action` (Apache-2.0) | 표 참고 | CI (`.github/workflows/ci.yml`) |
+
+## 데이터 · 외부 서비스
+
+오픈소스가 아니라 각 제공자의 이용 조건을 따른다.
+
+| 항목 | 쓰는 곳 | 조건 |
+|---|---|---|
+| [LOCALDATA](https://www.localdata.go.kr/) 공중화장실정보 전국파일 | 화장실 원본 데이터 (매일 갱신) | 공공데이터. 출처 표시 (화면 상세의 "출처: 공공데이터 LOCALDATA") |
+| [Kakao Local API](https://developers.kakao.com/docs/latest/ko/local/dev-guide) | 주소 → 좌표 지오코딩 | Kakao Developers 약관, 일일 호출 한도 |
+| Kakao 로그인, Google 로그인, Sign in with Apple | 소셜 로그인 토큰 검증, 탈퇴 시 연결 해제 | 각 제공자 약관 |
+
+## 라이선스
+
 코드는 사이드 프로젝트 (라이선스 미정).
