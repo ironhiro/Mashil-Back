@@ -29,6 +29,14 @@ try
     // --- DB ---
     var connStr = builder.Configuration.GetConnectionString("Postgres")
         ?? throw new InvalidOperationException("ConnectionStrings:Postgres is not configured.");
+    // 연결 풀 기본 최대가 100 이라 Postgres max_connections(기본 100)를 API 혼자 다 채울 수 있다 (부하 테스트에서 워커·psql 이
+    // "too many clients" 로 막힘). 연결 문자열에 따로 적지 않았으면 40 으로 — 600 req/s 에서도 동시 사용은 평균 10 안팎.
+    var pool = new Npgsql.NpgsqlConnectionStringBuilder(connStr);
+    if (!connStr.Contains("Pool Size", StringComparison.OrdinalIgnoreCase) && !connStr.Contains("MaxPoolSize", StringComparison.OrdinalIgnoreCase))
+    {
+        pool.MaxPoolSize = builder.Configuration.GetValue("Database:MaxPoolSize", 40);
+        connStr = pool.ConnectionString;
+    }
 
     builder.Services.AddAppStatus(builder.Configuration); // 점검 모드 (/api/app/status)
 
