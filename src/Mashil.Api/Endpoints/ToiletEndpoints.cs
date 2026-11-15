@@ -7,6 +7,9 @@ namespace Mashil.Api.Endpoints;
 
 public static class ToiletEndpoints
 {
+    /// <summary>`/near` 반경 상한 (미터). 웹의 가장 큰 선택지 10km 와 같다.</summary>
+    public const double MaxNearRadiusM = 10_000;
+
     public static void MapToiletEndpoints(this IEndpointRouteBuilder app)
     {
         var group = app.MapGroup("/api/toilets").WithTags("Toilets");
@@ -19,15 +22,15 @@ public static class ToiletEndpoints
             MashilDbContext db,
             CancellationToken ct) =>
         {
-            // 디폴트 1000 / 상한 5000 — 반경(radiusM) 이 자연 throttle.
-            // 도심 + 큰 반경에서 수천 건 반환될 수 있으니 클라이언트가 처리 부담 고려.
-            var results = await LoadNearAsync(db, lat, lng, radiusM, Math.Clamp(limit ?? 1000, 1, 5000), ct);
+            // 반경은 화면에서 고를 수 있는 최대(10km)까지로 자른다. 자르지 않으면 큰 값 하나로 전체 행을 훑게 된다.
+            var radius = Math.Clamp(radiusM, 1, MaxNearRadiusM);
+            var results = await LoadNearAsync(db, lat, lng, radius, Math.Clamp(limit ?? 1000, 1, 5000), ct);
             return Results.Ok(results);
         })
         .WithName("ListNearbyToilets")
         .WithSummary("내 위치 기준 반경 내 화장실 (가까운 순)")
         .WithDescription("""
-            `lat`/`lng` 중심에서 `radiusM` (미터) 이내 + `Location` 이 채워진 행만 거리 오름차순 반환.
+            `lat`/`lng` 중심에서 `radiusM` (미터, 1~10000 으로 클램프) 이내 + `Location` 이 채워진 행만 거리 오름차순 반환.
             거리는 PostGIS `ST_Distance` (geography) 결과로 미터 단위 (`distanceM`).
             `limit` 은 1~5000 사이로 클램프, 기본 1000. 반경이 자연 throttle 이라 보통 명시 불필요.
             `openStatus` 는 구조화된 개방시간으로 서버(KST)가 판정한 현재 상태 — 요일·휴무·공휴일·자정 넘김 반영.
@@ -47,11 +50,6 @@ public static class ToiletEndpoints
             var take = Math.Clamp(limit ?? 5, 1, 20);
             var near = await LoadNearAsync(db, lat, lng, radius, 1000, ct);
             var ids = near.Select(t => t.Id).ToList();
-
-            var ratingCounts = await db.Ratings.Where(r => ids.Contains(r.ToiletId))
-                .GroupBy(r => r.ToiletId)
-                .Select(g => new { g.Key, Count = g.Count() })
-                .ToDictionaryAsync(x => x.Key, x => x.Count, ct);
             // 가려지지 않은 댓글이 받은 표만 센다
             var votes = await db.CommentVotes
                 .Join(db.Comments, v => v.CommentId, c => c.Id, (v, c) => new { v.Value, c.ToiletId, c.Hidden })
@@ -63,7 +61,7 @@ public static class ToiletEndpoints
             var ranked = near
                 .Select(t =>
                 {
-                    var rc = ratingCounts.GetValueOrDefault(t.Id);
+                    var rc = t.RatingCount;
                     var v = votes.GetValueOrDefault(t.Id);
                     var up = v?.Up ?? 0;
                     var down = v?.Down ?? 0;
@@ -215,6 +213,7 @@ public static class ToiletEndpoints
                 // 평점 / 댓글 집계 — EF 가 SELECT subquery 로 변환.
                 // (double?) 캐스팅으로 평점 행 0개일 때 null 반환되게 함.
                 AverageRating = db.Ratings.Where(r => r.ToiletId == t.Id).Average(r => (double?)r.Score),
+                RatingCount = db.Ratings.Count(r => r.ToiletId == t.Id),
                 CommentCount = db.Comments.Count(c => c.ToiletId == t.Id && !c.Hidden),
             })
             .AsSplitQuery()
@@ -232,7 +231,7 @@ public static class ToiletEndpoints
             t.MaleChildStallCount, t.MaleChildUrinalCount,
             t.FemaleStallCount, t.FemaleAccessibleStallCount, t.FemaleChildStallCount,
             t.OpenHours, t.OpenHoursDetail, t.Phone,
-            t.AverageRating, t.CommentCount,
+            t.AverageRating, t.RatingCount, t.CommentCount,
             t.KindCode, t.ScheduleStatus,
             OpenStatusMapper.Evaluate(t.ScheduleStatus, t.Schedules, nowKst, holidays))).ToList();
         return results;
@@ -245,7 +244,7 @@ public sealed record RecommendedToiletDto(ToiletNearDto Toilet, double Score, in
 /// <summary>
 /// 가까운 화장실 검색(`/near`) 응답 행. <c>DistanceM</c> 은 검색 중심점에서의 거리 (미터, PostGIS <c>ST_Distance</c> geography 결과).
 /// 시설 정보(변기 수), 영업 정보(영업시간/전화), 평점·댓글 집계까지 한 번에.
-/// <c>AverageRating</c> 은 평점 행이 없으면 null. <c>CommentCount</c> 는 hidden 제외.
+/// <c>AverageRating</c> 은 평점 행이 없으면 null, <c>RatingCount</c> 는 그 평균을 낸 평점 수. <c>CommentCount</c> 는 hidden 제외.
 /// </summary>
 public sealed record ToiletNearDto(
     long Id,
@@ -269,6 +268,7 @@ public sealed record ToiletNearDto(
     string? OpenHoursDetail,
     string? Phone,
     double? AverageRating,
+    int RatingCount,
     int CommentCount,
     ToiletKind KindCode,
     ScheduleStatus ScheduleStatus,

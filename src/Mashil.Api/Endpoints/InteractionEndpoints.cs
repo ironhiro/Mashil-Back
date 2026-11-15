@@ -3,6 +3,7 @@ using Mashil.Api.Auth;
 using Mashil.Domain;
 using Mashil.Infrastructure;
 using Microsoft.EntityFrameworkCore;
+using Npgsql;
 
 namespace Mashil.Api.Endpoints;
 
@@ -26,27 +27,40 @@ public static class InteractionEndpoints
             var userId = principal.GetUserIdOrThrow();
             if (input.Score is < 1 or > 5)
                 return Results.BadRequest(new { error = "score must be 1..5" });
+            if (!await db.Toilets.AnyAsync(t => t.Id == toiletId, ct)) return Results.NotFound();
 
-            var existing = await db.Ratings.FirstOrDefaultAsync(r => r.UserId == userId && r.ToiletId == toiletId, ct);
-            if (existing is null)
+            // 같은 사람이 동시에 두 번 보내면 둘 다 "없음"을 보고 INSERT 해 유니크 위반이 난다 → 한 번 다시 읽어 갱신
+            for (var attempt = 0; ; attempt++)
             {
-                db.Ratings.Add(new Rating { UserId = userId, ToiletId = toiletId, Score = input.Score });
+                var existing = await db.Ratings.FirstOrDefaultAsync(r => r.UserId == userId && r.ToiletId == toiletId, ct);
+                if (existing is null)
+                {
+                    db.Ratings.Add(new Rating { UserId = userId, ToiletId = toiletId, Score = input.Score });
+                }
+                else
+                {
+                    existing.Score = input.Score;
+                    existing.UpdatedAt = DateTime.UtcNow;
+                }
+                try
+                {
+                    await db.SaveChangesAsync(ct);
+                    return Results.NoContent();
+                }
+                catch (DbUpdateException ex) when (attempt == 0 && IsUniqueViolation(ex))
+                {
+                    db.ChangeTracker.Clear();
+                }
             }
-            else
-            {
-                existing.Score = input.Score;
-                existing.UpdatedAt = DateTime.UtcNow;
-            }
-            await db.SaveChangesAsync(ct);
-            return Results.NoContent();
         })
         .RequireAuthorization()
         .RequireConsent()
         .WithSummary("화장실 별점 등록/갱신 (인증 필요)")
-        .WithDescription("(user, toilet) 유니크 — 같은 사용자가 같은 화장실에 다시 POST 하면 기존 점수 갱신. `score` 1~5 범위 외면 400.")
+        .WithDescription("(user, toilet) 유니크 — 같은 사용자가 같은 화장실에 다시 POST 하면 기존 점수 갱신. `score` 1~5 범위 외면 400, 없는 화장실이면 404.")
         .Produces(StatusCodes.Status204NoContent)
         .Produces(StatusCodes.Status400BadRequest)
-        .Produces(StatusCodes.Status401Unauthorized);
+        .Produces(StatusCodes.Status401Unauthorized)
+        .Produces(StatusCodes.Status404NotFound);
 
         var comments = app.MapGroup("/api/toilets/{toiletId:long}/comments").WithTags("Comments");
 
@@ -99,19 +113,27 @@ public static class InteractionEndpoints
                 return Results.BadRequest(new { error = "text required" });
             if (input.Text.Trim().Length > MaxCommentLength)
                 return Results.BadRequest(new { error = $"text too long (max {MaxCommentLength})" });
+            if (!await db.Toilets.AnyAsync(t => t.Id == toiletId, ct)) return Results.NotFound();
 
             var c = new Comment { UserId = userId, ToiletId = toiletId, Text = input.Text.Trim() };
             db.Comments.Add(c);
             await db.SaveChangesAsync(ct);
-            return Results.Created($"/api/toilets/{toiletId}/comments/{c.Id}", c);
+            // 엔티티를 그대로 내보내지 않고 목록과 같은 모양으로
+            var author = await db.UserProfiles.Where(u => u.Id == userId)
+                .Select(u => new { u.DisplayName, u.Status }).FirstOrDefaultAsync(ct);
+            return Results.Created($"/api/toilets/{toiletId}/comments/{c.Id}", new CommentView(
+                c.Id, c.ToiletId, c.UserId,
+                CommentAuthor.Name(author?.DisplayName, author?.Status ?? UserStatus.Active), false,
+                c.Text, c.Hidden, c.CreatedAt, c.UpdatedAt, true, 0, 0, 0));
         })
         .RequireAuthorization()
         .RequireConsent()
         .WithSummary("댓글 작성 (인증 필요)")
-        .WithDescription("빈 문자열/공백만이면 400. 작성자 ID 는 JWT 에서 추출 — 페이로드로 받지 않음.")
-        .Produces<Comment>(StatusCodes.Status201Created)
+        .WithDescription("빈 문자열/공백만이면 400, 없는 화장실이면 404. 작성자 ID 는 JWT 에서 추출 — 페이로드로 받지 않음. 응답은 목록과 같은 `CommentView`.")
+        .Produces<CommentView>(StatusCodes.Status201Created)
         .Produces(StatusCodes.Status400BadRequest)
-        .Produces(StatusCodes.Status401Unauthorized);
+        .Produces(StatusCodes.Status401Unauthorized)
+        .Produces(StatusCodes.Status404NotFound);
 
         app.MapPut("/api/comments/{commentId:long}/vote", async (
             long commentId,
@@ -129,21 +151,37 @@ public static class InteractionEndpoints
             if (comment.UserId == userId)
                 return Results.BadRequest(new { error = "cannot vote on your own comment" });
 
-            var existing = await db.CommentVotes.FirstOrDefaultAsync(v => v.CommentId == commentId && v.UserId == userId, ct);
-            if (input.Value == 0)
+            // 같은 사람의 표가 동시에 두 번 오면 둘 다 INSERT 해 PK 위반 → 한 번 다시 읽어 갱신
+            for (var attempt = 0; ; attempt++)
             {
-                if (existing is not null) db.CommentVotes.Remove(existing);
+                var existing = await db.CommentVotes.FirstOrDefaultAsync(v => v.CommentId == commentId && v.UserId == userId, ct);
+                if (input.Value == 0)
+                {
+                    if (existing is not null) db.CommentVotes.Remove(existing);
+                }
+                else if (existing is null)
+                {
+                    db.CommentVotes.Add(new CommentVote { CommentId = commentId, UserId = userId, Value = (short)input.Value });
+                }
+                else
+                {
+                    existing.Value = (short)input.Value;
+                    existing.UpdatedAt = DateTime.UtcNow;
+                }
+                try
+                {
+                    await db.SaveChangesAsync(ct);
+                    break;
+                }
+                catch (DbUpdateConcurrencyException) when (attempt == 0)
+                {
+                    db.ChangeTracker.Clear(); // 지우거나 고치려던 표를 다른 요청이 먼저 지움
+                }
+                catch (DbUpdateException ex) when (attempt == 0 && IsUniqueViolation(ex))
+                {
+                    db.ChangeTracker.Clear();
+                }
             }
-            else if (existing is null)
-            {
-                db.CommentVotes.Add(new CommentVote { CommentId = commentId, UserId = userId, Value = (short)input.Value });
-            }
-            else
-            {
-                existing.Value = (short)input.Value;
-                existing.UpdatedAt = DateTime.UtcNow;
-            }
-            await db.SaveChangesAsync(ct);
 
             var up = await db.CommentVotes.CountAsync(v => v.CommentId == commentId && v.Value > 0, ct);
             var down = await db.CommentVotes.CountAsync(v => v.CommentId == commentId && v.Value < 0, ct);
@@ -256,6 +294,9 @@ public static class InteractionEndpoints
     }
 
     public const int MaxCommentLength = 1000;
+
+    private static bool IsUniqueViolation(DbUpdateException ex) =>
+        ex.InnerException is PostgresException { SqlState: PostgresErrorCodes.UniqueViolation };
 
     /// <summary>댓글 목록 행. `authorDeleted` 면 작성자가 탈퇴함. `isMine` 은 토큰을 보냈을 때만 의미 있음.</summary>
     public sealed record CommentView(
