@@ -26,7 +26,8 @@ jobs:
         image: postgis/postgis:16-3.4
         env:
           POSTGRES_USER: mashil
-          POSTGRES_PASSWORD: mashil_ci
+          # 이 실행 안에서만 쓰는 일회용 DB. 값을 저장소에 적지 않도록 실행마다 다른 값
+          POSTGRES_PASSWORD: ci-${{ github.run_id }}-${{ github.run_attempt }}
           POSTGRES_DB: postgres
         ports: ["5432:5432"]
         options: >-
@@ -38,7 +39,7 @@ jobs:
       DOTNET_NOLOGO: "1"
       DOTNET_CLI_TELEMETRY_OPTOUT: "1"
       # 통합 테스트가 테스트마다 임시 DB 를 만들고 지운다 (tests/Mashil.Import.IntegrationTests/TestDatabase.cs)
-      MASHIL_TEST_DB: Host=localhost;Port=5432;Database=postgres;Username=mashil;Password=mashil_ci
+      MASHIL_TEST_DB: Host=localhost;Port=5432;Database=postgres;Username=mashil;Password=ci-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - uses: actions/checkout@v5
 
