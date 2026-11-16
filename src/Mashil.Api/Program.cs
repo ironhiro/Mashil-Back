@@ -23,6 +23,7 @@ Log.Logger = new LoggerConfiguration()
 try
 {
     var builder = WebApplication.CreateBuilder(args);
+    builder.WebHost.ConfigureKestrel(k => k.AddServerHeader = false); // "Server: Kestrel" 을 알리지 않는다
 
     // 운영은 콘솔 JSON 한 줄씩 (docker logs → 수집기), 개발은 사람이 읽는 텍스트. Error 이상은 Sentry 로도 (DSN 이 있을 때)
     builder.Host.UseSerilog((ctx, lc) => lc
@@ -187,6 +188,7 @@ try
     }
 
     app.UseForwardedHeaders(); // 로그·빈도 제한보다 먼저 — 둘 다 실제 클라이언트 IP 를 봐야 한다
+    app.UseMashilSecurityHeaders(); // VM 에서는 Caddy 도 붙이지만 Container Apps 에는 Caddy 가 없다
 
     // 요청마다 한 줄 (메서드, 경로, 상태, 걸린 시간). ASP.NET 내부 로그는 설정에서 Warning 으로 줄였다
     app.UseSerilogRequestLogging();
@@ -217,6 +219,7 @@ try
     app.MapRouteEndpoints();
     app.MapDevKakaoTestEndpoints(); // Development 에서만 매핑됨
     app.MapDevBridgeTestPage();     // Development 에서만 매핑됨 (Flutter 셸 브리지 시험)
+    app.MapMashilWeb();             // wwwroot 에 웹 빌드가 있으면 (Container Apps 이미지) 같은 도메인에서 내보낸다
 
     app.Run();
 }
