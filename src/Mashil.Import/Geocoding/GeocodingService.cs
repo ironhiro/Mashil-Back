@@ -16,7 +16,7 @@ public sealed record GeocodingOptions
     public int RequestDelayMs { get; init; } = 200;
 }
 
-public sealed record GeocodeBatchResult(int Processed, int Matched, int NoMatch, int ApiCalls, int CacheHits, bool BudgetExhausted, bool GeocoderUnavailable, string? TransientError = null);
+public sealed record GeocodeBatchResult(int Processed, int Matched, int NoMatch, int ApiCalls, int CacheHits, bool BudgetExhausted, bool GeocoderUnavailable, string? Error = null);
 
 /// <summary>
 /// 좌표가 없는 화장실을 지오코딩한다 (DATA-10·24·25, G13).
@@ -56,7 +56,7 @@ public sealed class GeocodingService(
 
         int matched = 0, noMatch = 0, calls = 0, hits = 0;
         bool budgetOut = false, unavailable = false;
-        string? transient = null;
+        string? error = null;
         var usage = await TodayUsageAsync(ct);
         var now = _clock.GetUtcNow().UtcDateTime;
 
@@ -80,8 +80,8 @@ public sealed class GeocodingService(
                         usage.Calls++; calls++;
                         candidates = await geocoder.SearchAsync(q.Query, ct);
                     }
-                    catch (GeocoderUnavailableException) { unavailable = stop = true; break; }
-                    catch (HttpRequestException ex) { transient = ex.StatusCode is { } sc ? $"HTTP {(int)sc}" : ex.Message; stop = true; break; } // 일시 오류 — 이 화장실은 다음 배치에서 다시
+                    catch (GeocoderUnavailableException ex) { error = ex.Message; unavailable = stop = true; break; }
+                    catch (HttpRequestException ex) { error = ex.StatusCode is { } sc ? $"HTTP {(int)sc}" : ex.Message; stop = true; break; } // 일시 오류 — 이 화장실은 다음 배치에서 다시
                     finally { await _delay(TimeSpan.FromMilliseconds(_opts.RequestDelayMs), ct); }
 
                     cached = Choose(q, candidates, expectedSido);
@@ -117,7 +117,7 @@ public sealed class GeocodingService(
 
         await db.SaveChangesAsync(ct);
         db.ChangeTracker.Clear();
-        return new GeocodeBatchResult(matched + noMatch, matched, noMatch, calls, hits, budgetOut, unavailable, transient);
+        return new GeocodeBatchResult(matched + noMatch, matched, noMatch, calls, hits, budgetOut, unavailable, error);
     }
 
     /// <summary>검증된 후보 중 하나를 고른다. 원문과 다른 주소로 잘못 매칭되는 것보다 NoMatch 가 낫다.</summary>

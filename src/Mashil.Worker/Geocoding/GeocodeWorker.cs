@@ -46,14 +46,14 @@ public sealed class GeocodeWorker(
                         r.Processed, r.Matched, r.NoMatch, r.ApiCalls, r.CacheHits);
 
                 // 일시 오류는 다음 배치에서 다시 하지만, 계속 나면 원인을 알 수 있게 남긴다
-                if (r.TransientError is not null)
-                    logger.LogWarning("Kakao 주소 검색 실패 ({Error}) — 다음 배치에서 다시", r.TransientError);
+                if (r.Error is not null && !r.GeocoderUnavailable)
+                    logger.LogWarning("Kakao 주소 검색 실패 ({Error}) — 다음 배치에서 다시", r.Error);
 
                 if (r.BudgetExhausted || r.GeocoderUnavailable)
                 {
                     sleep = UntilNextKstDay(clock.GetUtcNow());
                     logger.LogWarning("지오코딩 중단 ({Reason}) — {Hours:N1}시간 뒤 재개",
-                        r.BudgetExhausted ? "일일 예산 소진" : "Kakao 호출 불가(429/401)", sleep.TotalHours);
+                        r.BudgetExhausted ? "일일 예산 소진" : $"Kakao 호출 불가: {r.Error}", sleep.TotalHours);
                 }
                 else sleep = TimeSpan.FromSeconds(r.Processed > 0 ? _opts.BatchSleepSeconds : _opts.IdleSleepSeconds);
             }

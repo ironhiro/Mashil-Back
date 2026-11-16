@@ -61,6 +61,24 @@ az containerapp update -g rg-mashil -n mashil-api --set-env-vars "Sentry__Dsn=se
 
 웹과 API 가 같은 도메인이라 CORS(`Cors__Origins`)는 필요 없다. 앱(WebView)만 쓰면 비워 둔다.
 
+### 좌표 (Worker 지오코딩) — 꼭 넣을 것
+
+가져오기는 원본에서 좌표를 받지 않는다. Worker 가 카카오 주소 검색으로 주소 → 좌표를 채운다(`Kakao:RestApiKey`).
+키가 없으면 Worker 는 지오코딩을 쉬고, 지도·근처 검색에 아무것도 나오지 않는다.
+
+```bash
+# 키는 화면에 찍지 않고 user-secrets 에서 바로 넘긴다
+K="$(dotnet user-secrets list --project src/Mashil.Worker | sed -n 's/^Kakao:RestApiKey = //p' | tr -d '\r')"
+az containerapp secret set -g rg-mashil -n mashil-worker --secrets "kakao-rest=$K" -o none
+az containerapp update -g rg-mashil -n mashil-worker --set-env-vars "Kakao__RestApiKey=secretref:kakao-rest" -o none
+```
+
+- 카카오 콘솔에서 REST API 키에 **호출 허용 IP** 를 걸었다면 Container Apps 의 나가는 IP 대역을 넣는다.
+  `az containerapp show -g rg-mashil -n mashil-worker --query properties.outboundIpAddresses` (2026-11 기준
+  `20.196.224.0/19`, `20.214.112.0/21`). 대역 밖이면 Worker 로그에 `Kakao 호출 불가: HTTP 401 …` 이 남고 다음 날까지 쉰다.
+- 처음 5만여 곳은 초당 약 2.5건으로 6시간쯤 걸린다. 하루 예산은 `Geocode:DailyBudget`(80,000) — 카카오 무료 한도(100,000)를
+  운영·개발이 나눠 쓰므로 개발은 운영이 끝난 뒤에 돌린다. 개발 DB 에 운영의 `geocode_cache` 를 복사해 두면 API 를 거의 부르지 않는다.
+
 ## 배포 자격 증명 (CI)
 
 ```bash
