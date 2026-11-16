@@ -20,6 +20,7 @@ public class RateLimitingTests
     [InlineData("GET", "/api/auth/me", RateLimitTier.Auth)]
     [InlineData("POST", "/api/auth/oauth/kakao", RateLimitTier.Auth)]
     [InlineData("POST", "/api/auth/me/withdraw", RateLimitTier.Auth)]
+    [InlineData("POST", "/api/routes/walk", RateLimitTier.Write)] // 위치를 본문으로 받는 경로 계산: 쓰기 등급 제한
     [InlineData("GET", "/api/authors", RateLimitTier.Read)] // 세그먼트 단위 비교
     public void Classify_by_path_and_method(string method, string path, RateLimitTier expected)
     {
