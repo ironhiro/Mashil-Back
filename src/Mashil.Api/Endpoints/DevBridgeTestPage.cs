@@ -102,8 +102,8 @@ public static class DevBridgeTestPage
             const { body: n } = await api('GET', '/api/auth/nonce');
             const cred = await call('signIn', { provider: t.provider, nonce: n.nonce });
             if (!cred.ok) return log('재인증 취소', cred);
-            const r = await api('DELETE', '/api/auth/me', { provider: t.provider, idToken: cred.idToken, accessToken: cred.accessToken, authorizationCode: cred.authorizationCode, nonce: n.nonce }, t.access);
-            log('DELETE /api/auth/me ' + r.status, r.body || '(본문 없음)');
+            const r = await api('POST', '/api/auth/me/withdraw', { provider: t.provider, idToken: cred.idToken, accessToken: cred.accessToken, authorizationCode: cred.authorizationCode, nonce: n.nonce }, t.access);
+            log('POST /api/auth/me/withdraw ' + r.status, r.body || '(본문 없음)');
             if (r.status === 204) { await call('signOut', { provider: t.provider }).catch(() => {}); localStorage.removeItem('mashil.dev.tokens'); }
           } catch (e) { log('탈퇴 실패', String(e)); }
         }
