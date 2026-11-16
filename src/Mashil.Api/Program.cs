@@ -6,6 +6,7 @@ using Mashil.Api.Ops;
 using Mashil.Domain;
 using Mashil.Infrastructure;
 using Mashil.Infrastructure.Identity;
+using Mashil.Infrastructure.Routing;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
@@ -50,6 +51,9 @@ try
     builder.Services.AddAppStatus(builder.Configuration); // 점검 모드 (/api/app/status)
     builder.Services.AddAdminServices(builder.Configuration); // 관리자 데이터 작업 큐 (임포트·재정규화, ADM-05)
     builder.Services.AddAppVersion(builder.Configuration); // 앱 버전 정책 (/api/app/version)
+    // 도보 경로 (OpenStreetMap). Routing:Enabled 로 끄고 켠다
+    builder.Services.Configure<WalkRoutingOptions>(builder.Configuration.GetSection(WalkRoutingOptions.Section));
+    builder.Services.AddScoped<WalkRouter>();
 
     builder.Services.AddDbContext<MashilDbContext>(opt =>
         opt.UseNpgsql(connStr, npg => npg.UseNetTopologySuite()));
@@ -210,6 +214,7 @@ try
     app.MapModerationEndpoints();
     app.MapAdminEndpoints();
     app.MapMeEndpoints();
+    app.MapRouteEndpoints();
     app.MapDevKakaoTestEndpoints(); // Development 에서만 매핑됨
     app.MapDevBridgeTestPage();     // Development 에서만 매핑됨 (Flutter 셸 브리지 시험)
 

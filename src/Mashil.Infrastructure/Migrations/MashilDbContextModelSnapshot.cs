@@ -1171,6 +1171,47 @@ namespace Mashil.Infrastructure.Migrations
                     b.ToTable("value_mappings", (string)null);
                 });
 
+            modelBuilder.Entity("Mashil.Domain.WalkEdge", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<float>("CostFactor")
+                        .HasColumnType("real");
+
+                    b.Property<LineString>("Geom")
+                        .IsRequired()
+                        .HasColumnType("geometry (LineString, 4326)");
+
+                    b.Property<string>("Highway")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<double>("LengthM")
+                        .HasColumnType("double precision");
+
+                    b.Property<long>("Source")
+                        .HasColumnType("bigint");
+
+                    b.Property<bool>("Steps")
+                        .HasColumnType("boolean");
+
+                    b.Property<long>("Target")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Geom");
+
+                    NpgsqlIndexBuilderExtensions.HasMethod(b.HasIndex("Geom"), "gist");
+
+                    b.ToTable("walk_edges", (string)null);
+                });
+
             modelBuilder.Entity("Mashil.Domain.AppStatusSetting", b =>
                 {
                     b.HasOne("Mashil.Domain.UserProfile", null)

@@ -38,6 +38,9 @@ public sealed class MashilDbContext(DbContextOptions<MashilDbContext> options) :
     // 점검 모드 (ADM-06)
     public DbSet<AppStatusSetting> AppStatusSettings => Set<AppStatusSetting>();
 
+    // 도보 도로망 (OpenStreetMap, tools/Mashil.OsmImport 가 채운다)
+    public DbSet<WalkEdge> WalkEdges => Set<WalkEdge>();
+
     protected override void OnModelCreating(ModelBuilder b)
     {
         b.HasPostgresExtension("postgis");
@@ -95,6 +98,16 @@ public sealed class MashilDbContext(DbContextOptions<MashilDbContext> options) :
             e.HasKey(c => c.QueryKey);
             e.Property(c => c.QueryKey).HasMaxLength(256);
             e.Property(c => c.Status).HasConversion<string>().HasMaxLength(16);
+        });
+
+        b.Entity<WalkEdge>(e =>
+        {
+            e.ToTable("walk_edges");
+            e.HasKey(w => w.Id);
+            // geometry (평면): 범위 검색(&&)만 하고 거리는 앱에서 하버사인으로 잰다
+            e.Property(w => w.Geom).HasColumnType("geometry (LineString, 4326)");
+            e.HasIndex(w => w.Geom).HasMethod("gist");
+            e.Property(w => w.Highway).HasMaxLength(32);
         });
 
         b.Entity<PublicHoliday>(e =>

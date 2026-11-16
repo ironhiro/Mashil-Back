@@ -37,6 +37,8 @@
 
     <!-- CSV Import tool -->
     <PackageVersion Include="CsvHelper" Version="33.0.1" />
+    <!-- OSM PBF 리더: tools/Mashil.OsmImport 에서만 쓴다 (API 에는 넣지 않음) -->
+    <PackageVersion Include="OsmSharp" Version="6.2.0" />
     <PackageVersion Include="Microsoft.Extensions.Configuration" Version="9.0.0" />
     <PackageVersion Include="Microsoft.Extensions.Configuration.Json" Version="9.0.0" />
     <PackageVersion Include="Microsoft.Extensions.Hosting" Version="9.0.0" />
