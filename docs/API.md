@@ -122,7 +122,7 @@
 
 | Method | Path | 비고 |
 |---|---|---|
-| POST | `/api/change-requests` | body: `{ kind: "Add"\|"Edit"\|"Delete", targetToiletId?, payloadJson }`. **`"Update"` 도 `Edit` 으로 받는다** (웹 하위 호환, G3) |
+| POST | `/api/change-requests` | body: `{ kind: "Add"\|"Edit"\|"Delete", targetToiletId?, payloadJson }`. **`"Update"` 도 `Edit` 으로 받는다** (웹 하위 호환, G3). `payloadJson` 은 JSON 객체(최대 16KB), `Add` 는 `targetToiletId` 없이 `name` 필수, `Edit`/`Delete` 는 `targetToiletId` 필수 — 어기면 400, 없는 화장실이면 404 |
 
 `payloadJson` 키: `name`, `kind`, `roadAddress`, `lotAddress`, `latitude`, `longitude`, `openHours`, `openHoursDetail`, `phone`, `reason`. Edit 은 바뀐 필드만, 지우려면 `null`.
 

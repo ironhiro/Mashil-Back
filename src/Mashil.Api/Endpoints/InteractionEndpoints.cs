@@ -206,12 +206,17 @@ public static class InteractionEndpoints
             CancellationToken ct) =>
         {
             var requesterId = principal.GetUserIdOrThrow();
+            if (ValidateChangeRequest(input, out var payload) is { } error)
+                return Results.BadRequest(new { error });
+            if (input.TargetToiletId is { } targetId && !await db.Toilets.AnyAsync(t => t.Id == targetId, ct))
+                return Results.NotFound();
+
             var cr = new ChangeRequest
             {
                 RequesterId = requesterId,
                 TargetToiletId = input.TargetToiletId,
                 Kind = input.Kind,
-                PayloadJson = input.PayloadJson ?? "{}",
+                PayloadJson = payload,
             };
             db.ChangeRequests.Add(cr);
             await db.SaveChangesAsync(ct);
@@ -220,9 +225,12 @@ public static class InteractionEndpoints
         .RequireAuthorization()
         .RequireConsent()
         .WithSummary("변경 요청 제출 (인증 필요)")
-        .WithDescription("화장실 추가/수정/삭제 요청을 큐에 적재. 즉시 반영 안 됨 — 관리자 승인 후 별도 서비스가 적용. 상태는 항상 `Pending` 으로 시작.")
+        .WithDescription("화장실 추가/수정/삭제 요청을 큐에 적재. 즉시 반영 안 됨 — 관리자 승인 후 별도 서비스가 적용. 상태는 항상 `Pending` 으로 시작. " +
+                         "`payloadJson` 은 JSON 객체(최대 16KB). `Add` 는 대상 없이 `name` 필수, `Edit`/`Delete` 는 `targetToiletId` 필수 — 어기면 400, 없는 화장실이면 404.")
         .Produces<ChangeRequest>(StatusCodes.Status201Created)
-        .Produces(StatusCodes.Status401Unauthorized);
+        .Produces(StatusCodes.Status400BadRequest)
+        .Produces(StatusCodes.Status401Unauthorized)
+        .Produces(StatusCodes.Status404NotFound);
 
         // Admin endpoints
         var admin = app.MapGroup("/api/admin/change-requests").WithTags("Admin").RequireAuthorization("Admin");
@@ -308,6 +316,44 @@ public static class InteractionEndpoints
 
     private static bool IsUniqueViolation(DbUpdateException ex) =>
         ex.InnerException is PostgresException { SqlState: PostgresErrorCodes.UniqueViolation };
+
+    public const int MaxChangeRequestPayloadLength = 16 * 1024;
+
+    /// <summary>
+    /// 변경 요청 입력 검증 (CR-01). 틀리면 400 사유, 맞으면 null 과 저장할 payload.
+    /// 검증 없이 넣으면 jsonb 변환 실패(22P02)·FK 위반이 500 으로 나고, 대상 없는 수정 요청은 승인 때야 실패한다 (#16).
+    /// 대상 화장실이 실제로 있는지는 DB 를 봐야 해서 호출하는 쪽이 따로 확인한다.
+    /// </summary>
+    public static string? ValidateChangeRequest(ChangeRequestInput input, out string payload)
+    {
+        payload = string.IsNullOrWhiteSpace(input.PayloadJson) ? "{}" : input.PayloadJson;
+        if (!Enum.IsDefined(input.Kind)) return "kind must be Add, Edit or Delete";
+        if (payload.Length > MaxChangeRequestPayloadLength) return $"payloadJson must be at most {MaxChangeRequestPayloadLength} characters";
+        // PostgreSQL jsonb 는 \u0000 을 받지 않는다
+        if (payload.Contains("\\u0000", StringComparison.Ordinal)) return "payloadJson must not contain \\u0000";
+
+        System.Text.Json.JsonElement root;
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(payload);
+            root = doc.RootElement.Clone();
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            return "payloadJson must be valid JSON";
+        }
+        if (root.ValueKind != System.Text.Json.JsonValueKind.Object) return "payloadJson must be a JSON object";
+
+        if (input.Kind == ChangeRequestKind.Add)
+        {
+            if (input.TargetToiletId is not null) return "targetToiletId must be null for Add";
+            if (!root.TryGetProperty("name", out var name) || name.ValueKind != System.Text.Json.JsonValueKind.String || string.IsNullOrWhiteSpace(name.GetString()))
+                return "payloadJson.name is required for Add";
+        }
+        else if (input.TargetToiletId is null)
+            return "targetToiletId is required for Edit and Delete";
+        return null;
+    }
 
     /// <summary>댓글 목록 행. `authorDeleted` 면 작성자가 탈퇴함. `isMine` 은 토큰을 보냈을 때만 의미 있음.</summary>
     public sealed record CommentView(
