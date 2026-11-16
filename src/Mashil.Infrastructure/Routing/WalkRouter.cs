@@ -106,11 +106,11 @@ public sealed class WalkRouter(MashilDbContext db, IOptions<WalkRoutingOptions> 
         // 매개변수화된 쿼리 (EF). 상한 + 1 개까지만 읽어 넘었는지 본다
         var rows = await db.WalkEdges.AsNoTracking()
             .Where(e => e.Geom.Intersects(box))
-            .Select(e => new { e.Id, e.Source, e.Target, e.LengthM, e.CostFactor, e.Steps, e.Geom })
+            .Select(e => new { e.Id, e.Source, e.Target, e.LengthM, e.CostFactor, e.Steps, e.Geom, Seoul = e.Highway.StartsWith("seoul") })
             .Take(maxEdges + 1)
             .ToListAsync(ct);
         if (rows.Count > maxEdges) return null;
         return rows.Select(r => new RouteEdge(r.Id, r.Source, r.Target, r.LengthM, r.CostFactor, r.Steps,
-            r.Geom.Coordinates.Select(c => new GeoPoint(c.Y, c.X)).ToArray())).ToList();
+            r.Geom.Coordinates.Select(c => new GeoPoint(c.Y, c.X)).ToArray(), r.Seoul)).ToList();
     }
 }

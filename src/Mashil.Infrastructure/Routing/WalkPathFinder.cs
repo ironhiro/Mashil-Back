@@ -4,10 +4,12 @@ namespace Mashil.Infrastructure.Routing;
 public readonly record struct GeoPoint(double Lat, double Lng);
 
 /// <summary>탐색에 쓰는 간선 하나 (DB 의 walk_edges 한 행). 좌표는 Source → Target 순서.</summary>
-public sealed record RouteEdge(long Id, long Source, long Target, double LengthM, float CostFactor, bool Steps, GeoPoint[] Points);
+/// <summary><paramref name="Seoul"/>: 서울시 도보 네트워크에서 온 간선 (출처 표시가 달라진다).</summary>
+public sealed record RouteEdge(long Id, long Source, long Target, double LengthM, float CostFactor, bool Steps, GeoPoint[] Points, bool Seoul = false);
 
 /// <summary>찾은 길: 선(스냅한 출발점 → 스냅한 도착점), 실제 길이, 걷는 시간 어림.</summary>
-public sealed record WalkPath(IReadOnlyList<GeoPoint> Points, double DistanceM, int Minutes, int StepsEdges);
+/// <summary><paramref name="UsesSeoul"/>: 서울시 도보 네트워크 간선을 하나라도 지났다.</summary>
+public sealed record WalkPath(IReadOnlyList<GeoPoint> Points, double DistanceM, int Minutes, int StepsEdges, bool UsesSeoul = false);
 
 public enum RouteFailure
 {
@@ -225,9 +227,11 @@ public static class WalkPathFinder
         var points = new List<GeoPoint> { s.At };
         double distance = 0, minutes = 0;
         var stepsEdges = 0;
+        var usesSeoul = false;
         foreach (var leg in legs)
         {
             var edge = edges[leg.Edge];
+            usesSeoul |= edge.Seoul;
             var len = Math.Abs(leg.PosTo - leg.PosFrom);
             distance += len;
             minutes += len * (edge.Steps ? StepsTimeFactor : 1) / WalkMetersPerMinute;
@@ -236,7 +240,7 @@ public static class WalkPathFinder
                 if (points[^1] != p) points.Add(p);
         }
         if (points[^1] != e.At) points.Add(e.At);
-        return new WalkPath(points, Math.Round(distance, 1), Math.Max(1, (int)Math.Ceiling(minutes)), stepsEdges);
+        return new WalkPath(points, Math.Round(distance, 1), Math.Max(1, (int)Math.Ceiling(minutes)), stepsEdges, usesSeoul);
     }
 
     /// <summary>간선 위 a 에서 b 까지의 꺾은선 (a &gt; b 면 거꾸로). 위치는 Source 에서 따라간 거리 (m).</summary>

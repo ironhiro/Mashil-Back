@@ -1,6 +1,10 @@
 // 도보 도로망 임포트: OpenStreetMap PBF → walk_edges (도보 경로, POST /api/routes/walk)
 //
-//   dotnet run --project tools/Mashil.OsmImport -- --pbf data/osm/south-korea-latest.osm.pbf [--bbox 126.76,37.41,127.19,37.72] [--dry-run]
+//   dotnet run --project tools/Mashil.OsmImport -- --pbf data/osm/south-korea-latest.osm.pbf [--seoul] [--bbox 126.76,37.41,127.19,37.72] [--dry-run]
+//
+// --seoul: 서울 안은 서울시 도보 네트워크(Open API, 횡단보도·육교·지하철 출입구가 이어진 보행자용 노드·링크)로 바꾼다.
+//          서울 링크가 있는 약 200m 격자 칸의 OSM 간선은 빼고 서울 링크를 넣는다 (두 망을 섞지 않는다).
+//          인증키는 사용자 비밀 SeoulOpenData:ApiKey (Mashil.Api 와 공유) 또는 환경 변수 SeoulOpenData__ApiKey.
 //
 // 1) 길(way)을 읽어 걸을 수 있는 것만 남기고, 노드가 몇 개의 길에 쓰이는지 센다 (2개 이상이면 교차점)
 // 2) 노드를 읽어 필요한 노드의 좌표만 정렬 배열에 담는다
@@ -24,7 +28,7 @@ using OsmSharp.Streams;
 var argsMap = ParseArgs(args);
 if (!argsMap.TryGetValue("pbf", out var pbfPath))
 {
-    Console.Error.WriteLine("사용법: --pbf <파일.osm.pbf> [--bbox minLng,minLat,maxLng,maxLat] [--dry-run]");
+    Console.Error.WriteLine("사용법: --pbf <파일.osm.pbf> [--seoul] [--bbox minLng,minLat,maxLng,maxLat] [--dry-run]");
     return 2;
 }
 pbfPath = Path.GetFullPath(pbfPath);
@@ -35,10 +39,12 @@ if (!File.Exists(pbfPath) || !pbfPath.EndsWith(".osm.pbf", StringComparison.Ordi
 }
 var bbox = argsMap.TryGetValue("bbox", out var bboxText) ? ParseBbox(bboxText) : null;
 var dryRun = argsMap.ContainsKey("dry-run");
+var withSeoul = argsMap.ContainsKey("seoul");
 
 var config = new ConfigurationBuilder()
     .SetBasePath(AppContext.BaseDirectory)
     .AddJsonFile("appsettings.json", optional: true)
+    .AddUserSecrets("mashil-api-3f7e82a4-e2c8-4f6e-9d1a-1b9c54a6f8a2") // Mashil.Api 와 공유 (SeoulOpenData:ApiKey)
     .AddEnvironmentVariables()
     .Build();
 var connStr = config.GetConnectionString("Postgres");
@@ -142,6 +148,42 @@ foreach (var (nodes, cls) in ways)
 }
 ways = null!;
 Console.WriteLine($"3) 간선 {edges.Count:N0}개 (좌표 없는 노드로 건너뜀 {skippedMissing:N0}, 범위 밖 {skippedOutside:N0}) ({total.Elapsed:mm\\:ss})");
+
+// ── 3b. 서울 ───────────────────────────────────────────────────────────────
+if (withSeoul)
+{
+    var key = config["SeoulOpenData:ApiKey"] ?? "";
+    var seoul = await SeoulWalkNetwork.FetchAsync(key, msg => Console.WriteLine(msg));
+    // 서울 링크가 지나는 격자 칸 (경위도 0.002° ≈ 위아래 220m × 옆 180m)
+    var covered = new HashSet<(int, int)>();
+    foreach (var l in seoul)
+        foreach (var c in l.Geom.Coordinates)
+            covered.Add(Cell(c.X, c.Y));
+    var before = edges.Count;
+    edges.RemoveAll(e =>
+    {
+        var mid = e.Geom.Coordinates[e.Geom.NumPoints / 2];
+        return covered.Contains(Cell(mid.X, mid.Y));
+    });
+    var removed = before - edges.Count;
+    // 서울 노드 id 는 OSM id 와 겹치지 않게 큰 수를 더한다 (OSM 노드 id 는 아직 10^11 아래)
+    const long seoulOffset = 9_000_000_000_000_000;
+    var added = 0;
+    foreach (var l in seoul)
+    {
+        if (bbox is { } b && !l.Geom.Coordinates.Any(c => c.X >= b.MinLng && c.X <= b.MaxLng && c.Y >= b.MinLat && c.Y <= b.MaxLat)) continue;
+        double length = 0;
+        var cs = l.Geom.Coordinates;
+        for (var k = 1; k < cs.Length; k++) length += Haversine(cs[k - 1], cs[k]);
+        if (length <= 0) continue;
+        var kind = l.Crosswalk ? "seoul:crosswalk" : l.Overpass ? "seoul:overpass" : l.Tunnel ? "seoul:tunnel" : l.Subway ? "seoul:subway" : "seoul";
+        edges.Add((seoulOffset + l.From, seoulOffset + l.To, l.Geom, Math.Round(length, 2), 1.0f, false, kind));
+        added++;
+    }
+    Console.WriteLine($"3b) 서울: OSM 간선 {removed:N0}개를 빼고 서울 링크 {added:N0}개 (횡단보도 {seoul.Count(l => l.Crosswalk):N0}) ({total.Elapsed:mm\\:ss})");
+}
+
+static (int, int) Cell(double lng, double lat) => ((int)Math.Floor(lng / 0.002), (int)Math.Floor(lat / 0.002));
 
 if (dryRun)
 {

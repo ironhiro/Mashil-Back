@@ -87,6 +87,16 @@ public class WalkPathFinderTests
     }
 
     [Fact]
+    public void Reports_when_the_path_uses_seoul_links_for_the_credit()
+    {
+        var a = P(0, 0); var m = P(0, 0.001); var b = P(0, 0.002);
+        List<RouteEdge> osmOnly = [E(1, 1, 2, a, m), E(2, 2, 3, m, b)];
+        List<RouteEdge> mixed = [E(1, 1, 2, a, m), E(2, 2, 3, m, b) with { Seoul = true }];
+        Assert.False(WalkPathFinder.Find(osmOnly, a, b).UsesSeoul);
+        Assert.True(WalkPathFinder.Find(mixed, a, b).UsesSeoul);
+    }
+
+    [Fact]
     public void Steps_take_longer()
     {
         var a = P(0, 0); var b = P(0, 0.003);

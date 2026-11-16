@@ -11,6 +11,9 @@ public static class RouteEndpoints
 {
     public const string Attribution = "© OpenStreetMap contributors";
 
+    /// <summary>서울시 도보 네트워크(공공누리 1유형: 출처 표시)를 지난 경로의 출처</summary>
+    public const string AttributionWithSeoul = "© OpenStreetMap contributors · 서울특별시 도보 네트워크";
+
     public sealed record RoutePointDto(double Lat, double Lng);
 
     public sealed record WalkRouteRequest(RoutePointDto? From, RoutePointDto? To);
@@ -34,7 +37,8 @@ public static class RouteEndpoints
                 if (result.Path is { } path)
                 {
                     var points = path.Points.Select(p => new[] { Math.Round(p.Lat, 6), Math.Round(p.Lng, 6) }).ToArray();
-                    return Results.Ok(new WalkRouteResponse(points, path.DistanceM, path.Minutes, path.StepsEdges, Attribution));
+                    return Results.Ok(new WalkRouteResponse(points, path.DistanceM, path.Minutes, path.StepsEdges,
+                        path.UsesSeoul ? AttributionWithSeoul : Attribution));
                 }
                 return result.Error switch
                 {
