@@ -45,6 +45,10 @@ public sealed class GeocodeWorker(
                     logger.LogInformation("Geocode batch: 처리 {Processed} (성공 {Matched} / 실패 {NoMatch}), API {Calls}, 캐시 {Hits}",
                         r.Processed, r.Matched, r.NoMatch, r.ApiCalls, r.CacheHits);
 
+                // 일시 오류는 다음 배치에서 다시 하지만, 계속 나면 원인을 알 수 있게 남긴다
+                if (r.TransientError is not null)
+                    logger.LogWarning("Kakao 주소 검색 실패 ({Error}) — 다음 배치에서 다시", r.TransientError);
+
                 if (r.BudgetExhausted || r.GeocoderUnavailable)
                 {
                     sleep = UntilNextKstDay(clock.GetUtcNow());
