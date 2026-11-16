@@ -3,6 +3,8 @@
 #   docker build --target worker  -t mashil-worker .
 #   docker build --target migrate -t mashil-migrate .   # 배포 파이프라인에서 1회 실행 (OPS-03)
 # 빌드 컨텍스트는 저장소 루트. 외부 저장소(YhLibrary) 의존 없음.
+# api 이미지는 web-dist/ (웹 Mashil-Front 의 vite build 결과)를 wwwroot 로 담는다 → 한 컨테이너가 웹과 API 를 같은 도메인에서
+# (Azure Container Apps). 비어 있으면(.keep 만) 웹 없이 API 만 뜬다 (VM 구성은 Caddy 가 웹을 따로 내보냄).
 # CI 는 --build-arg GIT_SHA=<커밋> 을 넘긴다 → Sentry 릴리스(SENTRY_RELEASE)와 이미지 라벨.
 
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
@@ -34,12 +36,13 @@ ARG GIT_SHA=dev
 LABEL org.opencontainers.image.revision=$GIT_SHA
 WORKDIR /app
 COPY --from=build /out/api .
+COPY web-dist/ ./wwwroot/
 ENV ASPNETCORE_HTTP_PORTS=8080 \
     DOTNET_gcServer=0 \
     SENTRY_RELEASE=mashil-api@$GIT_SHA
 EXPOSE 8080
 USER app
-# 헬스체크는 Caddy 가 /healthz/ready 로 한다 (이미지에 curl 없음)
+# 헬스체크는 Caddy(VM) 또는 Container Apps 프로브가 /healthz/ready 로 한다 (이미지에 curl 없음)
 ENTRYPOINT ["dotnet", "Mashil.Api.dll"]
 
 # --- Worker (단일 인스턴스) ---

@@ -138,18 +138,30 @@ public static class RateLimiting
     /// <summary>
     /// X-Forwarded-For·X-Forwarded-Proto 는 <c>ForwardedHeaders:KnownProxies</c>(IP) 또는
     /// <c>ForwardedHeaders:KnownNetworks</c>(CIDR) 에서 온 요청만 믿는다. 비우면 루프백만 (ASP.NET 기본값).
-    /// 운영 Compose 는 Caddy 가 있는 내부 네트워크 대역을 넣는다. 아무나 헤더를 꾸며 제한을 피하지 못하게 하려는 것.
+    /// VM(Compose)은 Caddy 가 있는 내부 네트워크 대역을 넣는다. 아무나 헤더를 꾸며 제한을 피하지 못하게 하려는 것.
+    /// <para>
+    /// <c>ForwardedHeaders:TrustIngress=true</c> (Azure Container Apps): 인그레스 주소가 고정이 아니라 보낸 쪽은 따지지 않고,
+    /// <c>ForwardLimit=1</c> 로 X-Forwarded-For 의 <b>마지막 값(인그레스가 붙인 실제 접속 IP)</b>만 쓴다.
+    /// 클라이언트가 앞쪽에 꾸며 넣은 값은 무시된다. 컨테이너에 인그레스 말고 들어올 길이 없을 때만 켠다.
+    /// </para>
     /// </summary>
     public static IServiceCollection AddMashilForwardedHeaders(this IServiceCollection services, IConfiguration config)
     {
         var section = config.GetSection("ForwardedHeaders");
         var proxies = section.GetSection("KnownProxies").Get<string[]>() ?? [];
         var networks = section.GetSection("KnownNetworks").Get<string[]>() ?? [];
+        var trustIngress = section.GetValue<bool>("TrustIngress");
 
         services.Configure<ForwardedHeadersOptions>(o =>
         {
             o.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
-            o.ForwardLimit = 1; // 바로 앞 프록시(Caddy) 한 단계만
+            o.ForwardLimit = 1; // 바로 앞 프록시(Caddy 또는 인그레스) 한 단계만
+            if (trustIngress)
+            {
+                o.KnownProxies.Clear();
+                o.KnownIPNetworks.Clear();
+                return;
+            }
             if (proxies.Length + networks.Length == 0) return;
 
             o.KnownProxies.Clear();
