@@ -179,12 +179,18 @@ public static class ToiletEndpoints
         {
             var take = Math.Clamp(limit ?? 50, 1, 200);
             var skip = Math.Max(offset ?? 0, 0);
-            var like = $"%{q}%";
+            // 빈 값·공백만이면 전체가 아니라 빈 결과 (웹은 두 글자부터 검색한다)
+            if (string.IsNullOrWhiteSpace(q))
+            {
+                response.Headers[TotalCountHeader] = "0";
+                return Results.Ok(Array.Empty<ToiletSearchDto>());
+            }
+            var like = ContainsPattern(q);
             var matches = db.Toilets
                 .Where(t => t.Status != ToiletStatus.Removed
-                         && (EF.Functions.ILike(t.Name, like)
-                             || (t.RoadAddress != null && EF.Functions.ILike(t.RoadAddress, like))
-                             || (t.LotAddress != null && EF.Functions.ILike(t.LotAddress, like))));
+                         && (EF.Functions.ILike(t.Name, like, LikeEscape)
+                             || (t.RoadAddress != null && EF.Functions.ILike(t.RoadAddress, like, LikeEscape))
+                             || (t.LotAddress != null && EF.Functions.ILike(t.LotAddress, like, LikeEscape))));
             // 맞는 곳 전체 수. 목록은 limit 만큼씩 끊어 주므로 화면이 "N곳 중 몇 곳" 과 "더 보기" 를 그릴 수 있게 헤더로 준다
             response.Headers[TotalCountHeader] = (await matches.CountAsync(ct)).ToString(System.Globalization.CultureInfo.InvariantCulture);
             // 위치를 주면 가까운 곳부터 (위치 미확정 행은 뒤로). 없으면 이름순
@@ -209,8 +215,21 @@ public static class ToiletEndpoints
         })
         .WithName("SearchToilets")
         .WithSummary("이름/주소 텍스트 검색 (ILIKE)")
-        .WithDescription("`q` 로 `Name`, `RoadAddress`, `LotAddress` 를 OR ILIKE 매칭. 좌표 없는 행도 포함 (지도 미표시 행 검색용). `lat`·`lng` 를 주면 가까운 순(좌표 없는 행은 뒤), 없으면 이름순. `limit`(기본 50, 최대 200)·`offset` 으로 나눠 받고, 맞는 곳 전체 수는 `X-Total-Count` 헤더.")
+        .WithDescription("`q`(앞뒤 공백 제외, 글자 그대로 — `%`·`_` 도 와일드카드가 아님) 로 `Name`, `RoadAddress`, `LotAddress` 를 OR ILIKE 부분 일치. 빈 값·공백만이면 빈 목록(`X-Total-Count: 0`). 좌표 없는 행도 포함 (지도 미표시 행 검색용). `lat`·`lng` 를 주면 가까운 순(좌표 없는 행은 뒤), 없으면 이름순. `limit`(기본 50, 최대 200)·`offset` 으로 나눠 받고, 맞는 곳 전체 수는 `X-Total-Count` 헤더.")
         .Produces<IReadOnlyList<ToiletSearchDto>>();
+    }
+
+    /// <summary>ILIKE 이스케이프 문자.</summary>
+    public const string LikeEscape = "\\";
+
+    /// <summary>
+    /// 검색어 → 부분 일치 ILIKE 패턴. 앞뒤 공백을 빼고 <c>\</c>, <c>%</c>, <c>_</c> 를 이스케이프해 글자 그대로 찾는다.
+    /// 이스케이프하지 않으면 <c>_</c> 한 글자로 전체가 맞는다 (#19).
+    /// </summary>
+    public static string ContainsPattern(string q)
+    {
+        var escaped = q.Trim().Replace(LikeEscape, LikeEscape + LikeEscape).Replace("%", LikeEscape + "%").Replace("_", LikeEscape + "_");
+        return $"%{escaped}%";
     }
 
     /// <summary>반경 안 화장실 (가까운 순) + 평점·댓글 집계 + 서버 영업 판정. /near 와 /recommended 가 함께 쓴다.</summary>
