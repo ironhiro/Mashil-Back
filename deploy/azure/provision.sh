@@ -4,7 +4,7 @@
 #   az login 한 뒤:  bash deploy/azure/provision.sh
 #
 # 만드는 것 (한국 중부, 리소스 그룹 하나):
-#   - PostgreSQL Flexible Server (Burstable B1ms, 32GB) + PostGIS 허용, DB 두 개 (mashil = 운영, mashil_dev = 개발)
+#   - PostgreSQL Flexible Server (한국 남부 — 이 구독은 중부가 막혀 있음, Burstable B1ms, 32GB) + PostGIS 허용, DB 두 개 (mashil = 운영, mashil_dev = 개발)
 #   - Container Apps 환경 하나
 #   - 앱: mashil-api(운영, 최소 1) / mashil-api-dev(개발, 최소 0) — 웹 + API, 외부 인그레스 8080
 #         mashil-worker(운영, 최소 1) / mashil-worker-dev(개발, 최소 0 — 필요할 때만 1로)
@@ -17,10 +17,12 @@
 set -euo pipefail
 
 LOCATION="${LOCATION:-koreacentral}"
+PG_LOCATION="${PG_LOCATION:-koreasouth}"   # 이 구독은 한국 중부 PostgreSQL 이 막혀 있어(SkuNotAvailable) DB 만 한국 남부
 RG="${RG:-rg-mashil}"
 ENV_NAME="${ENV_NAME:-cae-mashil}"
-PG="${PG:-pg-mashil-$(az account show --query id -o tsv | cut -c1-6)}"   # 전 세계에서 유일해야 해서 구독 id 앞자리를 붙인다
+PG="${PG:-pg-mashil-ks-$(az account show --query id -o tsv | cut -c1-6)}"   # 전 세계에서 유일해야 해서 구독 id 앞자리를 붙인다 (ks = 한국 남부)
 PG_ADMIN="${PG_ADMIN:-mashiladmin}"
+PG_ZONE="${PG_ZONE:-}"   # SkuNotAvailable 이 나면 1·2·3 중 되는 영역을 지정 (예: PG_ZONE=2)
 REG="ghcr.io/ironhiro"
 SECRETS_FILE="${HOME}/.mashil/azure.env"
 
@@ -40,22 +42,22 @@ save PG_ADMIN "$PG_ADMIN"
 echo "== 리소스 그룹 $RG ($LOCATION)"
 az group create -n "$RG" -l "$LOCATION" -o none
 
-echo "== PostgreSQL $PG (B1ms, 32GB, 16)"
+echo "== PostgreSQL $PG ($PG_LOCATION, B1ms, 32GB, 16)"
 if ! az postgres flexible-server show -g "$RG" -n "$PG" -o none 2>/dev/null; then
   # --public-access 0.0.0.0: Azure 안의 서비스(Container Apps)만 허용. PC 는 아래에서 따로 연다
-  az postgres flexible-server create -g "$RG" -n "$PG" -l "$LOCATION" \
+  az postgres flexible-server create -g "$RG" -n "$PG" -l "$PG_LOCATION" \
     --tier Burstable --sku-name Standard_B1ms --storage-size 32 --version 16 \
     --admin-user "$PG_ADMIN" --admin-password "$PG_PASSWORD" \
-    --public-access 0.0.0.0 --high-availability Disabled --backup-retention 7 --yes -o none
+    --public-access 0.0.0.0 --backup-retention 7 ${PG_ZONE:+--zone "$PG_ZONE"} --yes -o none
 fi
 az postgres flexible-server parameter set -g "$RG" -s "$PG" -n azure.extensions --value POSTGIS -o none
 for db in mashil mashil_dev; do
-  az postgres flexible-server db show -g "$RG" -s "$PG" -d "$db" -o none 2>/dev/null \
-    || az postgres flexible-server db create -g "$RG" -s "$PG" -d "$db" -o none
+  az postgres flexible-server db show -g "$RG" -s "$PG" -n "$db" -o none 2>/dev/null \
+    || az postgres flexible-server db create -g "$RG" -s "$PG" -n "$db" -o none
 done
 MY_IP="$(curl -fsS https://api.ipify.org)"
-az postgres flexible-server firewall-rule create -g "$RG" -n "$PG" -r admin-pc --start-ip-address "$MY_IP" --end-ip-address "$MY_IP" -o none
-echo "   이 PC($MY_IP)에서 접속 허용 (임포트용, 끝나면 지워도 됨: firewall-rule delete -r admin-pc)"
+az postgres flexible-server firewall-rule create -g "$RG" -s "$PG" -n admin-pc --start-ip-address "$MY_IP" --end-ip-address "$MY_IP" -o none
+echo "   이 PC($MY_IP)에서 접속 허용 (임포트용, 끝나면 지워도 됨: firewall-rule delete -s <서버> -n admin-pc)"
 
 conn() { echo "Host=$PG.postgres.database.azure.com;Port=5432;Database=$1;Username=$PG_ADMIN;Password=$PG_PASSWORD;SSL Mode=Require"; }
 

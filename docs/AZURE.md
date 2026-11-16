@@ -45,7 +45,7 @@ export ConnectionStrings__Postgres="Host=$PG_HOST;Database=mashil_dev;Username=$
 export SeoulOpenData__ApiKey="$(dotnet user-secrets list --project src/Mashil.Api | sed -n 's/^SeoulOpenData:ApiKey = //p')"
 dotnet run --project tools/Mashil.OsmImport -- --pbf data/osm/south-korea-latest.osm.pbf --seoul
 # 운영은 Database=mashil 로 한 번 더. 끝나면 방화벽 규칙을 지워도 된다:
-az postgres flexible-server firewall-rule delete -g rg-mashil -n "${PG_HOST%%.*}" -r admin-pc --yes
+az postgres flexible-server firewall-rule delete -g rg-mashil -s "${PG_HOST%%.*}" -n admin-pc --yes
 ```
 
 ### 앱 설정 (추가로 넣을 것)
