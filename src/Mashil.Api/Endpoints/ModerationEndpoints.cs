@@ -15,6 +15,8 @@ public static class ModerationEndpoints
         app.MapPost("/api/comments/{commentId:long}/reports", async (
                 long commentId, ReportInput input, ClaimsPrincipal principal, ModerationService moderation, CancellationToken ct) =>
             {
+                // System.Text.Json 은 정의되지 않은 숫자(예: 9)도 enum 으로 받으므로 직접 거른다 (#17)
+                if (!input.HasValidReason) return AuthEndpoints.Error("invalid_reason", 400);
                 var (outcome, _) = await moderation.ReportAsync(commentId, principal.GetUserIdOrThrow(), input.Reason, input.Detail, ct);
                 return outcome switch
                 {
@@ -28,8 +30,9 @@ public static class ModerationEndpoints
             .RequireConsent()
             .WithTags("Moderation")
             .WithSummary("댓글 신고")
-            .WithDescription("reason = `Spam` / `Abuse` / `False` / `Other`, detail 은 선택 (500자). 같은 댓글은 한 번만 (409). 서로 다른 사용자 신고가 `Moderation:AutoHideReportCount`(기본 3)에 이르면 관리자 확인 전까지 자동 숨김.")
+            .WithDescription("reason = `Spam` / `Abuse` / `False` / `Other` (그 밖의 값은 400 `invalid_reason`), detail 은 선택 (500자). 같은 댓글은 한 번만 (409). 서로 다른 사용자 신고가 `Moderation:AutoHideReportCount`(기본 3)에 이르면 관리자 확인 전까지 자동 숨김.")
             .Produces(StatusCodes.Status201Created)
+            .Produces(StatusCodes.Status400BadRequest)
             .Produces(StatusCodes.Status409Conflict)
             .Produces(StatusCodes.Status404NotFound);
 
@@ -85,7 +88,12 @@ public static class ModerationEndpoints
             .Produces(StatusCodes.Status404NotFound);
     }
 
-    public sealed record ReportInput(ReportReason Reason, string? Detail);
+    public sealed record ReportInput(ReportReason Reason, string? Detail)
+    {
+        /// <summary>Spam / Abuse / False / Other 중 하나.</summary>
+        [System.Text.Json.Serialization.JsonIgnore]
+        public bool HasValidReason => Enum.IsDefined(Reason);
+    }
     public sealed record HideInput(bool Hidden);
     public sealed record BlockedUser(Guid UserId, string DisplayName, DateTime BlockedAt);
 }
