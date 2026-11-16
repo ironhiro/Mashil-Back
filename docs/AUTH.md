@@ -89,7 +89,7 @@ dotnet user-secrets --project src/Mashil.Api set "OAuth:TokenEncryptionKey" "<op
 | 동의 | `GET`·`POST /api/auth/consents` | 약관 버전을 올리면 다시 받는다. 동의 전 쓰기는 403 `consent_required` |
 | 갱신 | `POST /api/auth/refresh` | 회전. 쓴 토큰을 다시 쓰면 그 기기 세션 전체 폐기. **동시에 하나만** |
 | 로그아웃 | `POST /api/auth/logout` | 이 기기의 refresh token 폐기 |
-| 탈퇴 | `DELETE /api/auth/me` | 가입한 IdP 로 재인증 → 개인정보 파기 → IdP 연결 해제 (실패하면 Worker 가 재시도) |
+| 탈퇴 | `POST /api/auth/me/withdraw` (예전 `DELETE /api/auth/me` 도 당분간 받음) | 가입한 IdP 로 재인증 → 개인정보 파기 → IdP 연결 해제 (실패하면 Worker 가 재시도) |
 
 ## 탈퇴 시 남는 것과 지우는 것
 

@@ -19,6 +19,7 @@ public class RateLimitingTests
     [InlineData("PATCH", "/api/admin/comments/3", RateLimitTier.Write)]
     [InlineData("GET", "/api/auth/me", RateLimitTier.Auth)]
     [InlineData("POST", "/api/auth/oauth/kakao", RateLimitTier.Auth)]
+    [InlineData("POST", "/api/auth/me/withdraw", RateLimitTier.Auth)]
     [InlineData("GET", "/api/authors", RateLimitTier.Read)] // 세그먼트 단위 비교
     public void Classify_by_path_and_method(string method, string path, RateLimitTier expected)
     {
