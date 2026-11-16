@@ -145,8 +145,11 @@ jobs:
           target: ${{ matrix.target }}
           push: true
           build-args: GIT_SHA=${{ github.sha }}
+          # sha-run_id: 실행마다 다른 태그. 웹만 바뀌어 백엔드 커밋이 같아도 배포가 새 이미지를 가리키게 한다
+          # (같은 태그로 update 하면 Container Apps 는 바뀐 게 없다고 보고 새 리비전을 만들지 않는다)
           tags: |
             ${{ steps.img.outputs.name }}:${{ github.sha }}
+            ${{ steps.img.outputs.name }}:${{ github.sha }}-${{ github.run_id }}
             ${{ steps.img.outputs.name }}:latest
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
@@ -182,10 +185,11 @@ jobs:
           set -euo pipefail
           REG="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}"
           SHA="${GITHUB_SHA}"
-          echo "대상: mashil-*${SUFFIX} (${HOST}), 이미지 ${SHA::7}"
+          TAG="${SHA}-${GITHUB_RUN_ID}" # 이번 실행이 만든 이미지 (images 작업과 같은 태그)
+          echo "대상: mashil-*${SUFFIX} (${HOST}), 이미지 ${SHA::7}-${GITHUB_RUN_ID}"
 
           # 1) 마이그레이션 (expand/contract 규칙: 새 스키마는 직전 API 와도 호환, OPS-03)
-          az containerapp job update -n "mashil-migrate${SUFFIX}" -g "$RG" --image "$REG/mashil-migrate:$SHA" -o none
+          az containerapp job update -n "mashil-migrate${SUFFIX}" -g "$RG" --image "$REG/mashil-migrate:$TAG" -o none
           EXEC=$(az containerapp job start -n "mashil-migrate${SUFFIX}" -g "$RG" --query name -o tsv)
           for i in $(seq 1 60); do
             ST=$(az containerapp job execution show -n "mashil-migrate${SUFFIX}" -g "$RG" --job-execution-name "$EXEC" --query properties.status -o tsv)
@@ -196,8 +200,8 @@ jobs:
           [ "$ST" = "Succeeded" ] || { echo "::error::마이그레이션 시간 초과 ($EXEC)"; exit 1; }
 
           # 2) API (새 리비전이 준비되면 트래픽이 넘어간다) → 3) Worker
-          az containerapp update -n "mashil-api${SUFFIX}" -g "$RG" --image "$REG/mashil-api:$SHA" -o none
-          az containerapp update -n "mashil-worker${SUFFIX}" -g "$RG" --image "$REG/mashil-worker:$SHA" -o none
+          az containerapp update -n "mashil-api${SUFFIX}" -g "$RG" --image "$REG/mashil-api:$TAG" -o none
+          az containerapp update -n "mashil-worker${SUFFIX}" -g "$RG" --image "$REG/mashil-worker:$TAG" -o none
 
       - name: Smoke test
         run: |
