@@ -32,9 +32,17 @@ public class ChangeRequestValidationTests
     [InlineData("[1,2]")]
     [InlineData("\"name\"")]
     [InlineData("42")]
-    [InlineData("{\"name\":\"a\u0000b\"}")]
+    [InlineData("{\"name\":\"a\u0000b\"}")] // 문자열 안의 날 NUL 문자 — JSON 자체가 틀림
     public void Invalid_payload_is_rejected(string payload) =>
         Assert.NotNull(Validate(ChangeRequestKind.Edit, 271, payload));
+
+    [Fact]
+    public void Escaped_nul_is_rejected_because_jsonb_refuses_it()
+    {
+        // 올바른 JSON 이지만 PostgreSQL jsonb 가 22P05 로 거부하는 \u0000 이스케이프
+        var payload = @"{""name"":""a\u0000b""}";
+        Assert.Contains("u0000", Validate(ChangeRequestKind.Edit, 271, payload));
+    }
 
     [Fact]
     public void Oversized_payload_is_rejected()
