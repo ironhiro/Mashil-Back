@@ -30,6 +30,7 @@
    sudo cp /opt/mashil/deploy/status.example.json /srv/mashil/status/status.json
    ```
 4. **DNS** — `MASHIL_DOMAIN` 의 A(AAAA) 레코드를 VM 공인 IP 로. Caddy 가 첫 요청 때 Let's Encrypt 인증서를 받는다 (80·443 이 열려 있어야 함).
+   도메인: 운영 `toilets.ironhiro.dev`, 개발 `toilets-dev.ironhiro.dev` (Cloudflare DNS, 처음에는 **DNS only**). 프록시(주황 구름)를 켜려면 SSL 모드 Full (strict) + Caddy 전역 `servers { trusted_proxies static <Cloudflare 대역> }` + `ForwardedHeaders` 신뢰 대역을 같이 바꾼다 (안 바꾸면 API 빈도 제한이 모든 사용자를 Cloudflare IP 하나로 본다).
 5. **GHCR 접근** — CI 가 `ghcr.io/<owner>/mashil-{api,worker,migrate}` 에 올린다. 패키지는 기본 비공개이므로 둘 중 하나:
    - 서버에서 `docker login ghcr.io -u <GitHub 사용자>` (비밀번호 = `read:packages` 권한만 있는 PAT), 또는
    - GitHub → Packages → 각 패키지 → Visibility 를 Public 으로.
