@@ -1,5 +1,6 @@
 using Mashil.Domain;
 using Mashil.Infrastructure;
+using System.Linq.Expressions;
 using Microsoft.EntityFrameworkCore;
 using NetTopologySuite.Geometries;
 
@@ -12,6 +13,15 @@ public static class ToiletEndpoints
 
     /// <summary>`/near` 반경 상한 (미터). 웹의 가장 큰 선택지 10km 와 같다.</summary>
     public const double MaxNearRadiusM = 10_000;
+
+    /// <summary>
+    /// 공개 API 에 보이는 화장실. 삭제 요청이 승인(Removed)된 곳은 목록·상세에 없고 평점·댓글도 받지 않는다 (CR-03, #18).
+    /// 관리자는 <c>/api/admin/toilets/{id}</c> 로 계속 볼 수 있다.
+    /// </summary>
+    public static readonly Expression<Func<Toilet, bool>> IsVisible = t => t.Status != ToiletStatus.Removed;
+
+    /// <summary>출처 표시 (MAP-07): 공공데이터 원본이면 LOCALDATA, 제보로 추가된 곳이면 USER_SUBMITTED.</summary>
+    public static string SourceProvider(ToiletOrigin origin) => origin == ToiletOrigin.UserSubmitted ? "USER_SUBMITTED" : "LOCALDATA";
 
     public static void MapToiletEndpoints(this IEndpointRouteBuilder app)
     {
@@ -124,9 +134,10 @@ public static class ToiletEndpoints
         {
             var x = await db.Toilets
                 .Where(t => t.Id == id)
+                .Where(IsVisible)
                 .Select(t => new
                 {
-                    t.Id, t.ManagementNo, t.Name, t.Kind, t.KindCode, t.Status,
+                    t.Id, t.ManagementNo, t.Name, t.Kind, t.KindCode, t.Status, t.Origin,
                     t.RoadAddress, t.LotAddress, t.Latitude, t.Longitude, t.CoordinateSource,
                     t.OpenHours, t.OpenHoursDetail, t.Phone, t.ScheduleStatus,
                     Schedules = t.Schedules.Select(s => new ScheduleRow(s.DayType, s.OpenMinute, s.CloseMinute, s.IsClosed)).ToList(),
@@ -162,14 +173,16 @@ public static class ToiletEndpoints
                 new FacilitiesDto(x.MaleStallCount, x.MaleUrinalCount, x.MaleAccessibleStallCount, x.MaleAccessibleUrinalCount,
                     x.MaleChildStallCount, x.MaleChildUrinalCount, x.FemaleStallCount, x.FemaleAccessibleStallCount, x.FemaleChildStallCount,
                     x.EmergencyBellInstalled, x.EntranceCctv, x.DiaperChangerAvailable),
-                new SourceInfoDto("LOCALDATA", x.DataReferenceDate, x.CoordinateSource, x.EditedByPeople, lastRefreshedAt),
+                // 제보로 추가된 곳은 원본 파일과 무관하므로 원본 갱신 시각을 붙이지 않는다
+                new SourceInfoDto(SourceProvider(x.Origin), x.DataReferenceDate, x.CoordinateSource, x.EditedByPeople,
+                    x.Origin == ToiletOrigin.UserSubmitted ? null : lastRefreshedAt),
                 x.AverageRating, x.RatingCount));
         })
         .WithName("GetToilet")
         .WithSummary("화장실 단건 상세")
         .WithDescription("""
-            `id` 가 없으면 404. 상세 화면과 변경 요청 폼 prefill 에 쓴다.
-            `schedules` 는 요일별 개방 시간대(공휴일 포함), `openStatus` 는 서버(KST) 판정, `source` 는 출처 표시(MAP-07, 마지막 갱신 시각 포함), `averageRating`·`ratingCount` 는 평점 평균과 수.
+            `id` 가 없거나 삭제 승인(`Removed`)된 곳이면 404. 상세 화면과 변경 요청 폼 prefill 에 쓴다.
+            `schedules` 는 요일별 개방 시간대(공휴일 포함), `openStatus` 는 서버(KST) 판정, `source` 는 출처 표시(MAP-07, `provider` = `LOCALDATA` 또는 제보로 추가된 곳은 `USER_SUBMITTED`, 마지막 갱신 시각 포함), `averageRating`·`ratingCount` 는 평점 평균과 수.
             (NetTopologySuite `Point` 타입은 System.Text.Json 기본 직렬화 미지원이라 풀 엔티티 대신 DTO 사용.)
             """)
         .Produces<ToiletDetailDto>()

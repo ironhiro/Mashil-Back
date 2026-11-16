@@ -27,7 +27,7 @@ public static class InteractionEndpoints
             var userId = principal.GetUserIdOrThrow();
             if (input.Score is < 1 or > 5)
                 return Results.BadRequest(new { error = "score must be 1..5" });
-            if (!await db.Toilets.AnyAsync(t => t.Id == toiletId, ct)) return Results.NotFound();
+            if (!await db.Toilets.Where(ToiletEndpoints.IsVisible).AnyAsync(t => t.Id == toiletId, ct)) return Results.NotFound(); // 삭제된 곳은 받지 않음
 
             // 같은 사람이 동시에 두 번 보내면 둘 다 "없음"을 보고 INSERT 해 유니크 위반이 난다 → 한 번 다시 읽어 갱신
             for (var attempt = 0; ; attempt++)
@@ -56,7 +56,7 @@ public static class InteractionEndpoints
         .RequireAuthorization()
         .RequireConsent()
         .WithSummary("화장실 별점 등록/갱신 (인증 필요)")
-        .WithDescription("(user, toilet) 유니크 — 같은 사용자가 같은 화장실에 다시 POST 하면 기존 점수 갱신. `score` 1~5 범위 외면 400, 없는 화장실이면 404.")
+        .WithDescription("(user, toilet) 유니크 — 같은 사용자가 같은 화장실에 다시 POST 하면 기존 점수 갱신. `score` 1~5 범위 외면 400, 없거나 삭제(Removed)된 화장실이면 404.")
         .Produces(StatusCodes.Status204NoContent)
         .Produces(StatusCodes.Status400BadRequest)
         .Produces(StatusCodes.Status401Unauthorized)
@@ -113,7 +113,7 @@ public static class InteractionEndpoints
                 return Results.BadRequest(new { error = "text required" });
             if (input.Text.Trim().Length > MaxCommentLength)
                 return Results.BadRequest(new { error = $"text too long (max {MaxCommentLength})" });
-            if (!await db.Toilets.AnyAsync(t => t.Id == toiletId, ct)) return Results.NotFound();
+            if (!await db.Toilets.Where(ToiletEndpoints.IsVisible).AnyAsync(t => t.Id == toiletId, ct)) return Results.NotFound(); // 삭제된 곳은 받지 않음
 
             var c = new Comment { UserId = userId, ToiletId = toiletId, Text = input.Text.Trim() };
             db.Comments.Add(c);
@@ -129,7 +129,7 @@ public static class InteractionEndpoints
         .RequireAuthorization()
         .RequireConsent()
         .WithSummary("댓글 작성 (인증 필요)")
-        .WithDescription("빈 문자열/공백만이면 400, 없는 화장실이면 404. 작성자 ID 는 JWT 에서 추출 — 페이로드로 받지 않음. 응답은 목록과 같은 `CommentView`.")
+        .WithDescription("빈 문자열/공백만이면 400, 없거나 삭제(Removed)된 화장실이면 404. 작성자 ID 는 JWT 에서 추출 — 페이로드로 받지 않음. 응답은 목록과 같은 `CommentView`.")
         .Produces<CommentView>(StatusCodes.Status201Created)
         .Produces(StatusCodes.Status400BadRequest)
         .Produces(StatusCodes.Status401Unauthorized)
