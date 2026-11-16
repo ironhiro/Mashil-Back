@@ -169,7 +169,8 @@ jobs:
       group: deploy-${{ (github.event_name == 'workflow_dispatch' && inputs.target == 'prod') && 'prod' || 'dev' }}
       cancel-in-progress: false
     env:
-      SUFFIX: ${{ (github.event_name == 'workflow_dispatch' && inputs.target == 'prod') && '' || '-dev' }}
+      # '' 는 거짓이라 `조건 && '' || '-dev'` 는 늘 -dev 가 된다 → 조건을 뒤집어 쓴다
+      SUFFIX: ${{ !(github.event_name == 'workflow_dispatch' && inputs.target == 'prod') && '-dev' || '' }}
       HOST: ${{ (github.event_name == 'workflow_dispatch' && inputs.target == 'prod') && 'toilets.ironhiro.dev' || 'toilets-dev.ironhiro.dev' }}
       RG: ${{ vars.AZURE_RESOURCE_GROUP }}
     steps:
