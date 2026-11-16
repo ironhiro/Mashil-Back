@@ -7,7 +7,7 @@
 | 리소스 | 이름 | 비고 |
 |---|---|---|
 | 리소스 그룹 | `rg-mashil` | koreacentral |
-| PostgreSQL Flexible Server | `pg-mashil-<구독 앞 6자리>` | Burstable B1ms, 32GB, PG 16, PostGIS. DB `mashil`(운영), `mashil_dev`(개발) |
+| PostgreSQL Flexible Server | `pg-mashil-ks-<구독 앞 6자리>` | **한국 남부** (이 구독은 한국 중부 PostgreSQL 이 막혀 있음, `SkuNotAvailable`). Burstable B1ms, 32GB, PG 16, PostGIS. DB `mashil`(운영), `mashil_dev`(개발) |
 | Container Apps 환경 | `cae-mashil` | 운영·개발 같이 |
 | 웹 + API | `mashil-api` / `mashil-api-dev` | 0.5 vCPU, 1GiB. 운영 최소 1, 개발 최소 0 (첫 요청이 느릴 수 있음) |
 | Worker | `mashil-worker` / `mashil-worker-dev` | 0.25 vCPU, 0.5GiB, 인그레스 없음. 개발은 평소 0 |
