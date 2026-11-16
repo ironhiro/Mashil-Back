@@ -66,7 +66,8 @@
 | PATCH | `/api/auth/me` | body: `{ displayName }` (최대 20자) |
 | GET | `/api/auth/consents` | `{ required, documents: [{ docType, version, agreed }] }` |
 | POST | `/api/auth/consents` | body: `{ items: [{ docType: "Terms"\|"Privacy"\|"LocationTerms", version }] }` → 204, 옛 버전이면 409 |
-| DELETE | `/api/auth/me` | body: `{ provider, idToken?, accessToken?, authorizationCode?, nonce? }` (재인증) → 204 |
+| POST | `/api/auth/me/withdraw` | 탈퇴. body: `{ provider, idToken?, accessToken?, authorizationCode?, nonce? }` (재인증) 또는 레거시 `{ password }` → 204 |
+| DELETE | `/api/auth/me` | (예전 경로, 이전 앱용) `POST /me/withdraw` 와 같다. DELETE 본문은 중간 장비가 버릴 수 있어 새 클라이언트는 쓰지 않는다 |
 | POST | `/api/auth/register`, `/login` | **레거시·개발 전용** (`Auth:LegacyPasswordLogin`). 운영에서는 404 |
 
 로그인·갱신 응답:
