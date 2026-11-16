@@ -121,7 +121,7 @@ public sealed class ConsentService(MashilDbContext db, IOptions<ConsentOptions> 
     {
         var agreed = await db.UserConsents.Where(c => c.UserId == userId)
             .Select(c => new { c.DocType, c.DocVersion }).ToListAsync(ct);
-        return options.Value.Documents
+        return options.Value.Current
             .Select(d => new ConsentState(d.Type, d.Version, agreed.Any(a => a.DocType == d.Type && a.DocVersion == d.Version)))
             .ToList();
     }
@@ -132,7 +132,7 @@ public sealed class ConsentService(MashilDbContext db, IOptions<ConsentOptions> 
     /// <summary>현재 버전과 다른 버전에 동의하려 하면 false (화면이 오래된 약관을 보여준 경우).</summary>
     public async Task<bool> AgreeAsync(Guid userId, IReadOnlyList<(ConsentDocType Type, string Version)> items, CancellationToken ct)
     {
-        var current = options.Value.Documents;
+        var current = options.Value.Current;
         if (items.Any(i => !current.Any(d => d.Type == i.Type && d.Version == i.Version))) return false;
         var now = time.GetUtcNow().UtcDateTime;
         foreach (var (type, version) in items.Distinct())

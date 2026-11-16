@@ -361,6 +361,34 @@ public class AppleAndCryptoTests
         Assert.Equal([AuthProvider.Apple], registry.EnabledProviders);
     }
 
+    private static IReadOnlyList<(ConsentDocType, string)> CurrentConsents(Dictionary<string, string?> settings)
+    {
+        var config = new ConfigurationBuilder().AddInMemoryCollection(settings).Build();
+        using var sp = new ServiceCollection().AddLogging().AddSingleton(TimeProvider.System).AddMashilIdentity(config).BuildServiceProvider();
+        return sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<ConsentOptions>>().Value.Current.Select(d => (d.Type, d.Version)).ToList();
+    }
+
+    [Fact]
+    public void Configured_consent_documents_are_not_appended_to_defaults()
+    {
+        // #15: appsettings 의 3개 문서가 코드 기본값 3개 뒤에 덧붙어 6개가 되던 문제
+        var docs = CurrentConsents(new()
+        {
+            ["Consents:Documents:0:Type"] = "Terms", ["Consents:Documents:0:Version"] = "2",
+            ["Consents:Documents:1:Type"] = "Privacy", ["Consents:Documents:1:Version"] = "1",
+            ["Consents:Documents:2:Type"] = "LocationTerms", ["Consents:Documents:2:Version"] = "1",
+        });
+        Assert.Equal([(ConsentDocType.Terms, "2"), (ConsentDocType.Privacy, "1"), (ConsentDocType.LocationTerms, "1")], docs);
+    }
+
+    [Fact]
+    public void Defaults_apply_only_when_no_documents_are_configured()
+    {
+        var docs = CurrentConsents(new() { ["Consents:EnforceOnWrite"] = "false" });
+        Assert.Equal([(ConsentDocType.Terms, "1"), (ConsentDocType.Privacy, "1"), (ConsentDocType.LocationTerms, "1")], docs);
+        Assert.Equal(3, new ConsentOptions().Current.Count);
+    }
+
     [Theory]
     [InlineData("  마실   러  ", "마실 러")]
     [InlineData("   ", null)]
