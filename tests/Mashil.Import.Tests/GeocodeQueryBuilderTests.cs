@@ -119,4 +119,47 @@ public class GeocodeQueryBuilderTests
         var q = GeocodeQueryBuilder.Trim("경상남도 진주시 이반성면 장안로 65번길268");
         Assert.Equal(Mashil.Domain.GeocodeCacheStatus.NoMatch, GeocodingService.Choose(q, [Road("장안로", "65")], null).Status);
     }
+
+    // 2026-11-17 운영 NoMatch 표본: 시군구와 도로명·동이 붙어 있음
+    [Theory]
+    [InlineData("서울특별시 용산구원효로 9", "서울특별시 용산구 원효로 9", "원효로")]
+    [InlineData("서울특별시 용산구청파로 367", "서울특별시 용산구 청파로 367", "청파로")]
+    [InlineData("대전광역시 동구새터1길 9", "대전광역시 동구 새터1길 9", "새터1길")]
+    [InlineData("전남광주통합특별시 서구독립로 10", "전남광주통합특별시 서구 독립로 10", "독립로")]
+    public void Glued_district_and_road_are_split(string raw, string query, string road)
+    {
+        var q = GeocodeQueryBuilder.Trim(raw);
+        Assert.Equal(query, q.Query);
+        Assert.Equal(road, q.RoadName);
+    }
+
+    [Theory]
+    [InlineData("경기도 동두천시생연동 683-49", "경기도 동두천시 생연동 683-49", "생연동")]
+    [InlineData("전남광주통합특별시 여수시문수동 100", "전남광주통합특별시 여수시 문수동 100", "문수동")]
+    public void Glued_district_and_dong_are_split(string raw, string query, string dong)
+    {
+        var q = GeocodeQueryBuilder.Trim(raw);
+        Assert.Equal(query, q.Query);
+        Assert.Equal(dong, q.LotDong);
+    }
+
+    [Theory]
+    [InlineData("세종특별자치시 한누리대로 2130")]   // 시군구 없는 도로명은 그대로
+    [InlineData("서울특별시 구로구 구로동로 10")]
+    [InlineData("경기도 시흥시 시청로 20")]
+    public void Normal_addresses_are_not_split(string raw) =>
+        Assert.Equal(raw, GeocodeQueryBuilder.Trim(raw).Query);
+
+    [Fact]
+    public void Admin_dong_lot_adds_legal_dong_query()
+    {
+        var qs = GeocodeQueryBuilder.Build(null, "서울특별시 중랑구 면목5동 1545-3");
+        Assert.Equal(["서울특별시 중랑구 면목5동 1545-3", "서울특별시 중랑구 면목동 1545-3"], qs.Select(q => q.Query));
+        Assert.Equal("면목동", qs[1].LotDong);
+        Assert.Equal("1545", qs[1].MainNo);
+    }
+
+    [Fact]
+    public void Legal_dong_lot_adds_nothing() =>
+        Assert.Single(GeocodeQueryBuilder.Build(null, "서울특별시 양천구 목동 143-27"));
 }
