@@ -5,7 +5,7 @@ namespace Mashil.Api.Endpoints;
 
 /// <summary>
 /// 도보 경로 (방향 안내의 실제 길). 위치가 URL·접근 로그·프록시 캐시에 남지 않게 POST 본문으로 받는다 (NFR-06).
-/// POST 라서 쓰기 등급 요청 제한(IP당 분당 60회)이 걸린다. 응답은 저장하지 않게 no-store.
+/// 요청 제한은 경로 등급(IP당 분당 30회, RateLimiting:Route)과 Global. 응답은 저장하지 않게 no-store.
 /// </summary>
 public static class RouteEndpoints
 {
@@ -47,6 +47,7 @@ public static class RouteEndpoints
                     RouteError.FarFromRoad => Error("far_from_road", StatusCodes.Status422UnprocessableEntity),
                     RouteError.NoRoute => Error("no_route", StatusCodes.Status422UnprocessableEntity),
                     RouteError.Timeout => Error("route_timeout", StatusCodes.Status503ServiceUnavailable),
+                    RouteError.Busy => Error("route_busy", StatusCodes.Status503ServiceUnavailable),
                     _ => Error("too_complex", StatusCodes.Status422UnprocessableEntity),
                 };
             })
@@ -55,7 +56,7 @@ public static class RouteEndpoints
             .WithDescription("""
                 body: `{ from: { lat, lng }, to: { lat, lng } }`. 대한민국 범위 밖이면 400 out_of_area, 직선 3km 초과면 422 too_far,
                 출발·도착에서 150m 안에 걸을 수 있는 길이 없으면 422 far_from_road, 이어지는 길이 없으면 422 no_route,
-                계산량 상한이면 422 too_complex, 시간 상한이면 503 route_timeout, 꺼져 있으면 404 routing_disabled.
+                계산량 상한이면 422 too_complex, 시간 상한이면 503 route_timeout, 동시 계산이 가득 차면 503 route_busy, 꺼져 있으면 404 routing_disabled.
                 위치는 서버에 저장하지 않고 로그에도 남기지 않는다. 경로 화면에는 attribution 을 표시한다 (ODbL).
                 """)
             .Produces<WalkRouteResponse>()

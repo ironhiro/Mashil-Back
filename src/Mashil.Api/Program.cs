@@ -55,6 +55,7 @@ try
     builder.Services.AddAppLinks(builder.Configuration);   // 공유 링크 → 앱 (/.well-known/assetlinks.json 등)
     // 도보 경로 (OpenStreetMap). Routing:Enabled 로 끄고 켠다
     builder.Services.Configure<WalkRoutingOptions>(builder.Configuration.GetSection(WalkRoutingOptions.Section));
+    builder.Services.AddSingleton<WalkRouteGate>();
     builder.Services.AddScoped<WalkRouter>();
     builder.Services.AddHostedService<WalkNetworkCheck>(); // 도로망이 비면 Error 로그
 
