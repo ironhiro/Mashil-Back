@@ -48,17 +48,53 @@ public sealed record GeocodeCandidate(
 /// </summary>
 public static partial class GeocodeQueryBuilder
 {
-    /// <summary>도로명 → 지번 순서로 질의를 만든다. 같은 질의는 한 번만.</summary>
+    /// <summary>
+    /// 도로명 → 지번 순서로 질의를 만든다. 같은 질의는 한 번만.
+    /// 지번이 행정동("면목5동 1545-3")이면 법정동("면목동 1545-3") 질의를 바로 뒤에 덧붙인다 —
+    /// 지번은 법정동 기준이라 Kakao 는 행정동 지번에 지역 대표점만 준다 (2026-11-17 운영 NoMatch 표본).
+    /// </summary>
     public static IReadOnlyList<GeocodeQuery> Build(string? roadAddress, string? lotAddress)
     {
         var list = new List<GeocodeQuery>();
+        void Add(GeocodeQuery q) { if (q.Query.Length > 0 && list.All(x => x.Query != q.Query)) list.Add(q); }
         foreach (var raw in new[] { roadAddress, lotAddress })
         {
             if (string.IsNullOrWhiteSpace(raw)) continue;
             var q = Trim(raw);
-            if (q.Query.Length > 0 && list.All(x => x.Query != q.Query)) list.Add(q);
+            Add(q);
+            if (LegalDong(q) is { } legal) Add(legal);
         }
         return list;
+    }
+
+    /// <summary>행정동 지번 질의 → 법정동 질의 ("신정7동" → "신정동"). 행정동이 아니면 null.</summary>
+    internal static GeocodeQuery? LegalDong(GeocodeQuery q)
+    {
+        if (q.LotDong is null || AdminDongRe().Match(q.LotDong) is not { Success: true } m) return null;
+        var legal = m.Groups[1].Value + "동";
+        var tokens = q.Query.Split(' ');
+        var i = Array.LastIndexOf(tokens, q.LotDong);
+        if (i < 0) return null;
+        tokens[i] = legal;
+        return q with { Query = string.Join(' ', tokens), LotDong = legal };
+    }
+
+    /// <summary>
+    /// 시도 바로 뒤에 시군구와 도로명·동이 붙은 토큰을 띄운다 ("용산구원효로" → "용산구 원효로", "여수시문수동" → "여수시 문수동").
+    /// 앞쪽 토큰이 모두 행정구역(시도·시·군·구)일 때만. 잘못 띄워도 도로명·본번 검증에서 걸러진다.
+    /// </summary>
+    private static string SplitGluedRegion(string s)
+    {
+        var tokens = s.Split(' ').ToList();
+        for (var i = 1; i < Math.Min(tokens.Count, 3); i++)
+        {
+            if (!tokens.Take(i).All(t => AdminTokenRe().IsMatch(t))) break;
+            var m = GluedRegionRe().Match(tokens[i]);
+            if (!m.Success) continue;
+            tokens[i] = m.Groups[2].Value;
+            tokens.Insert(i, m.Groups[1].Value);
+        }
+        return string.Join(' ', tokens);
     }
 
     public static GeocodeQuery Trim(string raw)
@@ -74,6 +110,8 @@ public static partial class GeocodeQueryBuilder
 
         if (s.Length >= 12 && !s[..12].Contains(' '))      // 띄어쓰기 없는 주소
             s = SpacesRe().Replace(AdminSuffixRe().Replace(s, "$1 "), " ").Trim();
+        else
+            s = SplitGluedRegion(s);
 
         s = RoadNumberedRe().Replace(s, "$1$2");           // 장안로 65번길 → 장안로65번길 (도로명 한 토큰)
         s = RoadNoGlueRe().Replace(s, "$1 $2");            // 길주로623 → 길주로 623
@@ -110,4 +148,7 @@ public static partial class GeocodeQueryBuilder
     [GeneratedRegex(@"((?:[가-힣]+)(?:리|동|가))(\d)")] private static partial Regex LotGlueRe();
     [GeneratedRegex(@"^(.*\S(?:로|길))\s+(지하\s*)?(\d+(?:-\d+)?)(?!\d)")] private static partial Regex RoadRe();
     [GeneratedRegex(@"^(.*?(?:동|리|가))\s+(산\s*)?(\d+(?:-\d+)?)(?!\d)")] private static partial Regex LotRe();
+    [GeneratedRegex(@"^([가-힣]+?)\d+동$")] private static partial Regex AdminDongRe();
+    [GeneratedRegex(@"^[가-힣]+(특별시|광역시|특별자치시|특별자치도|도|시|군|구)$")] private static partial Regex AdminTokenRe();
+    [GeneratedRegex(@"^([가-힣]{1,4}?(?:시|군|구))([가-힣0-9]{2,}(?:로|길|동|리|읍|면|가))$")] private static partial Regex GluedRegionRe();
 }
