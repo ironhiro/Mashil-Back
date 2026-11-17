@@ -87,6 +87,34 @@ public class GeocodingServiceDbTests
     }
 
     [DbFact]
+    public async Task Region_only_address_is_not_geocoded_to_region_centre()
+    {
+        // #14: 시도뿐인 주소는 API 를 부르지 않고 NoMatch, 리 단위 도로명 칸은 건너뛰고 번호 있는 지번으로 찾는다
+        await using var tdb = await TestDatabase.CreateAsync();
+        static string Row(string key, string road, string lot) => Files.Row(key).Replace("서울특별시 종로구 테스트로 1,,", $"{road},{lot},");
+        await Import(tdb, Files.Raw(
+            Row("K1", "서울특별시", ""),
+            Row("K2", "전라남도 진도군 임회면 죽림리", "전라남도 진도군 임회면 죽림리 432-12")));
+
+        var fake = new FakeGeocoder(q => q.EndsWith("432-12")
+            ? [new(34.4, 126.2, "전남 진도군 임회면 죽림리 432-12", "전라남도", "진도군", null, null, "전남 진도군 임회면 죽림리 432-12", "432")]
+            : [new(37.5665, 126.978, "서울", "서울특별시", null, null, null, "서울", "")]);
+        var r = await Service(tdb, out var db, fake).RunBatchAsync();
+        await db.DisposeAsync();
+
+        Assert.Equal((2, 1, 1), (r.Processed, r.Matched, r.NoMatch));
+        Assert.EndsWith("432-12", Assert.Single(fake.Queries));
+
+        await using var check = tdb.NewContext();
+        var k1 = await check.Toilets.Include(t => t.Issues).SingleAsync(t => t.ManagementNo == "K1");
+        Assert.Equal(CoordinateSource.KakaoNoMatch, k1.CoordinateSource);
+        Assert.Null(k1.Location);
+        Assert.Contains("지역 대표", Assert.Single(k1.Issues, i => i.Type == IssueType.GeocodeNoMatch).Note);
+        var k2 = await check.Toilets.SingleAsync(t => t.ManagementNo == "K2");
+        Assert.Equal(34.4, k2.Latitude);
+    }
+
+    [DbFact]
     public async Task Address_change_invalidates_geocode_and_retries()
     {
         await using var tdb = await TestDatabase.CreateAsync();

@@ -21,6 +21,11 @@ public sealed record GeocodeQuery(string Query, string? RoadName, string? LotDon
             return c.LotAddress.Contains(LotDong, StringComparison.Ordinal) && c.MainAddressNo == MainNo;
         return true;
     }
+
+    /// <summary>
+    /// 질의에 숫자가 하나도 없음 — 시도·시군구·읍면동·도로명뿐인 주소. 어떤 결과든 지역 대표점이라 API 를 부르지 않는다 (#14).
+    /// </summary>
+    public bool IsRegionOnly => !Query.Any(char.IsAsciiDigit);
 }
 
 /// <summary>지오코더 후보 (Kakao 주소 검색 문서 1건).</summary>
@@ -28,7 +33,14 @@ public sealed record GeocodeCandidate(
     double Latitude, double Longitude, string? AddressName,
     string? Sido, string? Sigungu,
     string? RoadName, string? MainBuildingNo,
-    string? LotAddress, string? MainAddressNo);
+    string? LotAddress, string? MainAddressNo)
+{
+    /// <summary>
+    /// 건물번호나 지번 본번이 있는 후보 — 한 지점을 가리킨다.
+    /// 없으면 Kakao 의 지역·도로 문서(REGION, ROAD)로 좌표가 시군구·리·도로의 대표점이라 채택하지 않는다 (#14).
+    /// </summary>
+    public bool IsPinpoint => !string.IsNullOrEmpty(MainBuildingNo) || !string.IsNullOrEmpty(MainAddressNo);
+}
 
 /// <summary>
 /// 원문 주소 → 지오코딩 질의 (DATA-24). Kakao 권장대로 상세 주소(건물명, 층, 호, 출입구, 쉼표 뒤 정보)를 뺀다.

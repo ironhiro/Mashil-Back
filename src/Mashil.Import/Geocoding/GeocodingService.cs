@@ -69,6 +69,7 @@ public sealed class GeocodingService(
 
             foreach (var q in queries)
             {
+                if (q.IsRegionOnly) continue; // 번호 없는 주소 — 다음 질의(보통 지번)로
                 var cached = await db.GeocodeCache.FindAsync([q.Query], ct);
                 if (cached is null)
                 {
@@ -109,7 +110,10 @@ public sealed class GeocodingService(
             else
             {
                 t.CoordinateSource = CoordinateSource.KakaoNoMatch; // 같은 주소로 다시 시도하지 않음 (주소가 바뀌면 재시도)
-                AddIssue(t, IssueType.GeocodeNoMatch, IssueSeverity.Warning, queryText, "주소로 좌표를 찾지 못함 — 관리자 좌표 입력 필요", now);
+                var note = queries.All(q => q.MainNo is null)
+                    ? "주소에 건물번호·지번이 없어 지역 대표 좌표만 나옴 — 관리자 좌표 입력 필요"
+                    : "주소로 좌표를 찾지 못함 — 관리자 좌표 입력 필요";
+                AddIssue(t, IssueType.GeocodeNoMatch, IssueSeverity.Warning, queryText, note, now);
                 noMatch++;
             }
             t.UpdatedAt = now;
@@ -120,10 +124,13 @@ public sealed class GeocodingService(
         return new GeocodeBatchResult(matched + noMatch, matched, noMatch, calls, hits, budgetOut, unavailable, error);
     }
 
-    /// <summary>검증된 후보 중 하나를 고른다. 원문과 다른 주소로 잘못 매칭되는 것보다 NoMatch 가 낫다.</summary>
+    /// <summary>
+    /// 검증된 후보 중 하나를 고른다. 원문과 다른 주소로 잘못 매칭되는 것보다 NoMatch 가 낫다.
+    /// 건물번호·지번이 없는 지역 단위 후보(시도·시군구·리·도로 대표점)는 검증 근거가 없어도 채택하지 않는다 (#14).
+    /// </summary>
     internal static GeocodeCacheEntry Choose(GeocodeQuery q, IReadOnlyList<GeocodeCandidate> candidates, string? expectedSido)
     {
-        var verified = candidates.Where(q.Matches).ToList();
+        var verified = candidates.Where(c => c.IsPinpoint && q.Matches(c)).ToList();
         if (verified.Count == 0)
             return new GeocodeCacheEntry { QueryKey = q.Query, Status = GeocodeCacheStatus.NoMatch, CandidateCount = candidates.Count };
 

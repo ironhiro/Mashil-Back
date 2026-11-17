@@ -79,6 +79,40 @@ public class GeocodeQueryBuilderTests
         Assert.Equal(1, c.CandidateCount);
     }
 
+    [Theory]
+    [InlineData("서울특별시", true)]
+    [InlineData("대전광역시 서구", true)]
+    [InlineData("전남광주통합특별시 진도군 임회면 죽림리", true)]
+    [InlineData("서울특별시 동작구 사당로", true)]
+    [InlineData("인천광역시 중구 관창로3번길", false)] // 숫자는 있지만 건물번호 없음 — 후보 쪽에서 거른다
+    [InlineData("전남광주통합특별시 진도군 임회면 죽림리 432-12", false)]
+    public void Address_without_any_number_is_region_only(string raw, bool regionOnly)
+    {
+        Assert.Equal(regionOnly, GeocodeQueryBuilder.Trim(raw).IsRegionOnly);
+    }
+
+    private static GeocodeCandidate Region(string name, double lat = 37.5665) =>
+        new(lat, 126.978, name, "서울특별시", null, null, null, name, "");
+
+    [Fact]
+    public void Region_level_candidate_is_never_chosen()
+    {
+        // #14: 검증할 번호가 없는 질의라도 지역 대표점(REGION 문서)은 채택하지 않는다
+        Assert.Equal(Mashil.Domain.GeocodeCacheStatus.NoMatch, GeocodingService.Choose(GeocodeQueryBuilder.Trim("서울특별시"), [Region("서울")], null).Status);
+
+        var road = GeocodeQueryBuilder.Trim("인천광역시 중구 관창로3번길");
+        var roadDoc = new GeocodeCandidate(37.4, 126.4, "인천 영종구 관창로3번길", "인천광역시", "영종구", "관창로3번길", "", null, null);
+        Assert.Equal(Mashil.Domain.GeocodeCacheStatus.NoMatch, GeocodingService.Choose(road, [roadDoc], null).Status);
+    }
+
+    [Fact]
+    public void Pinpoint_candidate_wins_over_region_candidate()
+    {
+        var q = GeocodeQueryBuilder.Trim("인천광역시 부평구 길주로623");
+        var c = GeocodingService.Choose(q, [Region("인천", 37.45), Road("길주로", "623", "인천광역시", 37.5)], "인천광역시");
+        Assert.Equal((37.5, 1), (c.Latitude, c.CandidateCount));
+    }
+
     [Fact]
     public void No_verified_candidate_is_no_match()
     {
