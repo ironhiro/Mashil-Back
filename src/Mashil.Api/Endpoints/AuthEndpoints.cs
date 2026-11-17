@@ -133,7 +133,7 @@ public static class AuthEndpoints
             .Produces(StatusCodes.Status409Conflict);
 
         // 탈퇴는 POST: 재인증 자격 증명을 본문에 실어 보내는데, DELETE 본문은 HTTP 에서 의미가 정해져 있지 않아
-        // 프록시·게이트웨이가 버릴 수 있다 (RFC 9110 §9.3.5). DELETE 는 이전 앱 버전을 위해 당분간 같이 둔다.
+        // 프록시·게이트웨이가 버릴 수 있다 (RFC 9110 §9.3.5). 예전 DELETE /me 는 출시 전이라 쓰는 앱이 없어 지웠다.
         group.MapPost("/me/withdraw", DeleteAccountAsync)
             .RequireAuthorization()
             .WithSummary("계정 삭제 (USR-03, SD-08)")
@@ -146,12 +146,6 @@ public static class AuthEndpoints
             .Produces(StatusCodes.Status204NoContent)
             .Produces(StatusCodes.Status400BadRequest)
             .Produces(StatusCodes.Status403Forbidden);
-
-        group.MapDelete("/me", DeleteAccountAsync)
-            .RequireAuthorization()
-            .WithSummary("계정 삭제 (예전 경로)")
-            .WithDescription("`POST /api/auth/me/withdraw` 와 같다. 본문이 있는 DELETE 라 중간 장비가 본문을 버릴 수 있어 새 경로를 쓴다. 이전 앱이 사라지면 지운다.")
-            .Produces(StatusCodes.Status204NoContent);
 
         MapLegacyPasswordEndpoints(group);
     }
@@ -217,7 +211,7 @@ public static class AuthEndpoints
 
     private static string? Blank(string? s) => string.IsNullOrWhiteSpace(s) ? null : s;
 
-    /// <summary>탈퇴 처리. POST /me/withdraw 와 (예전) DELETE /me 가 같이 쓴다.</summary>
+    /// <summary>탈퇴 처리 (POST /me/withdraw).</summary>
     private static async Task<IResult> DeleteAccountAsync(
         [FromBody] DeleteAccountInput input,
         ClaimsPrincipal principal,
