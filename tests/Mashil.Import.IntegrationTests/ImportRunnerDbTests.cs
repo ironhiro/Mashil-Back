@@ -157,6 +157,32 @@ public class ImportRunnerDbTests
     }
 
     [DbFact]
+    public async Task Renormalize_run_is_not_the_prevalidation_baseline()
+    {
+        // #13: 재정규화(파일 없음, 1행)가 최신 성공 실행이어도 작은 파일은 직전 파일 임포트 기준으로 거부
+        await using var tdb = await TestDatabase.CreateAsync();
+        var keys = Enumerable.Range(1, 20).Select(i => $"K{i}").ToArray();
+        await Run(tdb, Files.Of(keys));
+
+        await using (var db = tdb.NewContext())
+        {
+            var id = await db.Toilets.Where(t => t.ManagementNo == "K1").Select(t => t.Id).SingleAsync();
+            var renorm = await new ImportRunner(db).RenormalizeAsync(Src, toiletIds: [id]);
+            Assert.Equal(ImportRunStatus.Succeeded, renorm.Status);
+        }
+
+        var r = await Run(tdb, Files.Of("K1", "K2", "K3"));
+        Assert.Equal(ImportRunStatus.Rejected, r.Status);
+
+        await using var check = tdb.NewContext();
+        Assert.Equal(20, await check.Toilets.CountAsync(t => t.Status == ToiletStatus.Active));
+
+        // 같은 원본을 다시 올리면 재정규화 실행이 끼어 있어도 직전 파일과 같아 건너뜀
+        var same = await Run(tdb, Files.Of(keys));
+        Assert.Equal(ImportRunStatus.Skipped, same.Status);
+    }
+
+    [DbFact]
     public async Task Concurrent_run_is_refused_by_advisory_lock()
     {
         await using var tdb = await TestDatabase.CreateAsync();

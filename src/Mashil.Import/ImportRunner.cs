@@ -41,12 +41,21 @@ public sealed class ImportRunner(MashilDbContext db, ImportPolicy? policy = null
         _ => throw new NotSupportedException($"알 수 없는 데이터 소스: {sourceCode}"),
     };
 
-    /// <summary>직전에 반영까지 끝난 실행 (Succeeded 또는 PendingApproval). 사전 검증의 비교 기준.</summary>
+    /// <summary>
+    /// 직전에 원본 파일을 읽어 반영까지 끝난 실행 (Succeeded 또는 PendingApproval). 사전 검증·같은 파일 건너뛰기의 비교 기준.
+    /// 재정규화(Renormalize)는 파일 없이 저장된 원본 일부만 다시 계산하므로 크기·행 수가 원본 파일과 무관하다.
+    /// 이를 기준으로 삼으면 3행짜리 파일도 통과해 전체가 Missing 이 되므로 제외한다 (DATA-20).
+    /// </summary>
     public static Task<ImportRun?> LastAppliedAsync(MashilDbContext db, int sourceId, CancellationToken ct) =>
-        db.ImportRuns.AsNoTracking()
-            .Where(r => r.SourceId == sourceId && (r.Status == ImportRunStatus.Succeeded || r.Status == ImportRunStatus.PendingApproval))
-            .OrderByDescending(r => r.Id)
-            .FirstOrDefaultAsync(ct);
+        LastAppliedQuery(db.ImportRuns.AsNoTracking(), sourceId).FirstOrDefaultAsync(ct);
+
+    /// <summary><see cref="LastAppliedAsync"/> 의 조건. 최신순 정렬 — 첫 행이 기준.</summary>
+    public static IQueryable<ImportRun> LastAppliedQuery(IQueryable<ImportRun> runs, int sourceId) =>
+        runs.Where(r => r.SourceId == sourceId
+                     && (r.Status == ImportRunStatus.Succeeded || r.Status == ImportRunStatus.PendingApproval)
+                     && r.Trigger != ImportTrigger.Renormalize
+                     && r.FileSizeBytes > 0)
+            .OrderByDescending(r => r.Id);
 
     public async Task<ImportRun> RunAsync(
         string sourceCode,

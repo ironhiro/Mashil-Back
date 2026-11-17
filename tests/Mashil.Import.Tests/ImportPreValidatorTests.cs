@@ -68,6 +68,55 @@ public class ImportPreValidatorTests
         Assert.Contains("손상 행", v.Reason);
     }
 
+    private static ImportRun Run(long id, ImportTrigger trigger, ImportRunStatus status, long size, int rows, int sourceId = 1) => new()
+    {
+        Id = id, SourceId = sourceId, Trigger = trigger, Status = status, FileSha256 = size > 0 ? "h" + id : "",
+        NormalizerVersion = "0", FileSizeBytes = size, TotalRows = rows,
+    };
+
+    [Fact]
+    public void Baseline_skips_renormalize_run_and_uses_last_file_import()
+    {
+        // #13: 매핑 규칙 추가 → 1곳짜리 재정규화 실행이 최신이 되어도 기준은 직전 파일 임포트
+        var runs = new[]
+        {
+            Run(19, ImportTrigger.Scheduled, ImportRunStatus.Succeeded, 25_000_000, 53_580),
+            Run(20, ImportTrigger.Renormalize, ImportRunStatus.Succeeded, 0, 1),
+        };
+        var last = ImportRunner.LastAppliedQuery(runs.AsQueryable(), 1).FirstOrDefault();
+        Assert.Equal(19, last?.Id);
+    }
+
+    [Fact]
+    public void Baseline_ignores_failed_rejected_skipped_and_other_sources()
+    {
+        var runs = new[]
+        {
+            Run(1, ImportTrigger.Manual, ImportRunStatus.PendingApproval, 1000, 100),
+            Run(2, ImportTrigger.Upload, ImportRunStatus.Rejected, 10, 3),
+            Run(3, ImportTrigger.Scheduled, ImportRunStatus.Failed, 0, 0),
+            Run(4, ImportTrigger.Scheduled, ImportRunStatus.Skipped, 1000, 0),
+            Run(5, ImportTrigger.Upload, ImportRunStatus.Succeeded, 2000, 200, sourceId: 2),
+            Run(6, ImportTrigger.Renormalize, ImportRunStatus.Succeeded, 0, 100),
+        };
+        Assert.Equal(1, ImportRunner.LastAppliedQuery(runs.AsQueryable(), 1).FirstOrDefault()?.Id);
+        Assert.Null(ImportRunner.LastAppliedQuery(runs.Where(r => r.Id >= 2).AsQueryable(), 1).FirstOrDefault());
+    }
+
+    [Fact]
+    public void Tiny_upload_after_renormalize_is_rejected_against_file_baseline()
+    {
+        var prev = File(100);
+        var runs = new[]
+        {
+            Run(1, ImportTrigger.Manual, ImportRunStatus.Succeeded, prev.Bytes.LongLength, 100),
+            Run(2, ImportTrigger.Renormalize, ImportRunStatus.Succeeded, 0, 1),
+        };
+        var last = ImportRunner.LastAppliedQuery(runs.AsQueryable(), 1).FirstOrDefault();
+        var v = ImportPreValidator.Validate(File(3), Adapter, last, ImportPolicy.Default);
+        Assert.False(v.Accepted);
+    }
+
     [Fact]
     public void Missing_header_and_empty_file_are_rejected()
     {
