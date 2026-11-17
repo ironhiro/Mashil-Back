@@ -2,6 +2,7 @@
 #   docker build --target api     -t mashil-api .
 #   docker build --target worker  -t mashil-worker .
 #   docker build --target migrate -t mashil-migrate .   # 배포 파이프라인에서 1회 실행 (OPS-03)
+#   docker build --target osmimport -t mashil-osmimport .  # 도보 도로망 갱신 Job (월 1회, docs/AZURE.md)
 # 빌드 컨텍스트는 저장소 루트. 외부 저장소(YhLibrary) 의존 없음.
 # api 이미지는 web-dist/ (웹 Mashil-Front 의 vite build 결과)를 wwwroot 로 담는다 → 한 컨테이너가 웹과 API 를 같은 도메인에서
 # (Azure Container Apps). 비어 있으면(.keep 만) 웹 없이 API 만 뜬다 (VM 구성은 Caddy 가 웹을 따로 내보냄).
@@ -67,3 +68,20 @@ COPY --from=bundle /out/efbundle ./efbundle
 USER app
 # 연결 문자열은 MASHIL_DB 환경 변수 (MashilDbContextFactory)
 ENTRYPOINT ["./efbundle"]
+
+# --- 도보 도로망 임포트 (Container Apps Job, 일정 실행) ---
+# 기본 인자 --download: Geofabrik 한국 PBF 와 .md5 를 받아 확인 → walk_edges_new → 검증 → 교체 (tools/Mashil.OsmImport)
+FROM build AS osmbuild
+COPY tools/Mashil.OsmImport/ tools/Mashil.OsmImport/
+RUN dotnet publish tools/Mashil.OsmImport/Mashil.OsmImport.csproj -c Release -o /out/osmimport
+
+FROM mcr.microsoft.com/dotnet/runtime:10.0 AS osmimport
+ARG GIT_SHA=dev
+LABEL org.opencontainers.image.revision=$GIT_SHA
+WORKDIR /app
+COPY --from=osmbuild /out/osmimport .
+ENV DOTNET_ENVIRONMENT=Production     MASHIL_GIT_SHA=$GIT_SHA
+USER app
+# 연결 문자열은 ConnectionStrings__Postgres. 서울 망까지 넣으려면 인자에 --seoul 과 SeoulOpenData__ApiKey
+ENTRYPOINT ["dotnet", "Mashil.OsmImport.dll"]
+CMD ["--download"]

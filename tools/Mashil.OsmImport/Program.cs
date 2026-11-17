@@ -1,6 +1,10 @@
 // 도보 도로망 임포트: OpenStreetMap PBF → walk_edges (도보 경로, POST /api/routes/walk)
 //
-//   dotnet run --project tools/Mashil.OsmImport -- --pbf data/osm/south-korea-latest.osm.pbf [--seoul] [--bbox 126.76,37.41,127.19,37.72] [--dry-run]
+//   dotnet run --project tools/Mashil.OsmImport -- --pbf data/osm/south-korea-latest.osm.pbf [--seoul] [--bbox 126.76,37.41,127.19,37.72] [--dry-run] [--force]
+//   dotnet run --project tools/Mashil.OsmImport -- --download [https://…/south-korea-latest.osm.pbf]   (Azure Job: 받아서 바로)
+//
+// --download: PBF 와 .md5 를 임시 폴더에 받아 쓴다 (기본 Geofabrik 한국, https 만). 끝나면 지운다.
+// --force:    새 간선 수가 지금의 80% 아래여도 바꾼다. 기본은 멈춘다 (받은 파일이 잘렸거나 분류가 깨진 경우).
 //
 // --seoul: 서울 안은 서울시 도보 네트워크(Open API, 횡단보도·육교·지하철 출입구가 이어진 보행자용 노드·링크)로 바꾼다.
 //          서울 링크가 있는 약 200m 격자 칸의 OSM 간선은 빼고 서울 링크를 넣는다 (두 망을 섞지 않는다).
@@ -8,10 +12,12 @@
 //
 // 1) 길(way)을 읽어 걸을 수 있는 것만 남기고, 노드가 몇 개의 길에 쓰이는지 센다 (2개 이상이면 교차점)
 // 2) 노드를 읽어 필요한 노드의 좌표만 정렬 배열에 담는다
-// 3) 길을 교차점마다 끊어 간선을 만들고 (--bbox 가 있으면 그 안만), 한 트랜잭션에서 기존 행을 지우고 COPY 로 넣는다.
-//    읽는 쪽(API)은 커밋 전까지 예전 도로망을 그대로 본다.
+// 3) 길을 교차점마다 끊어 간선을 만든다 (--bbox 가 있으면 그 안만).
+// 4) 새 테이블 walk_edges_new 에 인덱스 없이 COPY → PK·GIST 인덱스 → ANALYZE → 건수 확인(WalkSwap) → 짧은 트랜잭션에서
+//    예전 테이블을 지우고 이름을 바꾼다. 읽는 쪽(API)은 바꾸는 순간까지 예전 도로망을 그대로 본다.
+//    한 테이블에 DELETE + COPY 를 하면 GIST 를 행마다 고치고 죽은 행이 테이블 크기만큼 쌓여 같은 서버의 운영 DB 까지 느려진다.
 //
-// 보안: 같은 폴더에 .md5 가 있으면 대조하고 다르면 멈춘다 (받은 파일이 깨졌거나 바뀐 경우). 네트워크는 쓰지 않는다.
+// 보안: .md5 가 있으면 대조하고 다르면 멈춘다 (받은 파일이 깨졌거나 바뀐 경우). --download 가 없으면 네트워크를 쓰지 않는다.
 // 출처: © OpenStreetMap contributors (ODbL 1.0). 경로를 보여 주는 화면에 표시한다.
 
 using System.Diagnostics;
@@ -26,17 +32,6 @@ using OsmSharp;
 using OsmSharp.Streams;
 
 var argsMap = ParseArgs(args);
-if (!argsMap.TryGetValue("pbf", out var pbfPath))
-{
-    Console.Error.WriteLine("사용법: --pbf <파일.osm.pbf> [--seoul] [--bbox minLng,minLat,maxLng,maxLat] [--dry-run]");
-    return 2;
-}
-pbfPath = Path.GetFullPath(pbfPath);
-if (!File.Exists(pbfPath) || !pbfPath.EndsWith(".osm.pbf", StringComparison.OrdinalIgnoreCase))
-{
-    Console.Error.WriteLine($"PBF 파일이 아닙니다: {pbfPath}");
-    return 2;
-}
 var bbox = argsMap.TryGetValue("bbox", out var bboxText) ? ParseBbox(bboxText) : null;
 var dryRun = argsMap.ContainsKey("dry-run");
 var withSeoul = argsMap.ContainsKey("seoul");
@@ -48,9 +43,60 @@ var config = new ConfigurationBuilder()
     .AddEnvironmentVariables()
     .Build();
 var connStr = config.GetConnectionString("Postgres");
-if (!dryRun && string.IsNullOrWhiteSpace(connStr))
+if (!dryRun)
 {
-    Console.Error.WriteLine("ConnectionStrings:Postgres 가 필요합니다 (환경 변수 ConnectionStrings__Postgres).");
+    if (string.IsNullOrWhiteSpace(connStr))
+    {
+        Console.Error.WriteLine("ConnectionStrings:Postgres 가 필요합니다 (환경 변수 ConnectionStrings__Postgres).");
+        return 2;
+    }
+    // 받고 읽는 데 1분 넘게 쓰기 전에 DB 부터 확인한다 (연결, walk_edges 있음 = 마이그레이션 끝남)
+    try
+    {
+        await using var probe = new NpgsqlConnection(connStr);
+        await probe.OpenAsync();
+        await using var cmd = new NpgsqlCommand("SELECT to_regclass('walk_edges') IS NOT NULL", probe);
+        if (await cmd.ExecuteScalarAsync() is not true)
+        {
+            Console.Error.WriteLine("walk_edges 테이블이 없습니다. 마이그레이션을 먼저 돌리세요.");
+            return 2;
+        }
+    }
+    catch (NpgsqlException e)
+    {
+        Console.Error.WriteLine($"DB 에 연결하지 못했습니다: {e.Message}");
+        return 2;
+    }
+}
+
+string pbfPath;
+if (argsMap.TryGetValue("download", out var downloadUrl))
+{
+    var dir = Directory.CreateTempSubdirectory("mashil-osm-").FullName;
+    AppDomain.CurrentDomain.ProcessExit += (_, _) => { try { Directory.Delete(dir, recursive: true); } catch (IOException) { } };
+    try
+    {
+        var url = new Uri(string.IsNullOrWhiteSpace(downloadUrl) ? PbfDownload.DefaultUrl : downloadUrl);
+        pbfPath = await PbfDownload.FetchAsync(url, dir, Console.WriteLine);
+    }
+    catch (Exception e) when (e is HttpRequestException or ArgumentException or UriFormatException or IOException or TaskCanceledException)
+    {
+        Console.Error.WriteLine($"받지 못했습니다: {e.Message}");
+        return 4;
+    }
+}
+else if (argsMap.TryGetValue("pbf", out var given))
+{
+    pbfPath = Path.GetFullPath(given);
+}
+else
+{
+    Console.Error.WriteLine("사용법: --pbf <파일.osm.pbf> | --download [url]  [--seoul] [--bbox minLng,minLat,maxLng,maxLat] [--dry-run] [--force]");
+    return 2;
+}
+if (!File.Exists(pbfPath) || !pbfPath.EndsWith(".osm.pbf", StringComparison.OrdinalIgnoreCase))
+{
+    Console.Error.WriteLine($"PBF 파일이 아닙니다: {pbfPath}");
     return 2;
 }
 
@@ -197,11 +243,13 @@ dsb.UseNetTopologySuite();
 await using var dataSource = dsb.Build();
 await using (var conn = await dataSource.OpenConnectionAsync())
 {
-    await using var tx = await conn.BeginTransactionAsync();
-    // TRUNCATE 는 읽기까지 막으므로 DELETE (MVCC: API 는 커밋 전까지 예전 행을 본다)
-    await using (var del = new NpgsqlCommand("DELETE FROM walk_edges", conn, tx)) await del.ExecuteNonQueryAsync();
+    // 4a) 새 테이블. 인덱스 없이 넣고 나중에 한 번에 만든다. 지난번 실패로 남은 것은 지운다
+    await Exec(conn, """
+        DROP TABLE IF EXISTS walk_edges_new;
+        CREATE TABLE walk_edges_new (LIKE walk_edges INCLUDING DEFAULTS INCLUDING IDENTITY);
+        """);
     await using (var writer = await conn.BeginBinaryImportAsync(
-        "COPY walk_edges (\"Source\", \"Target\", \"Geom\", \"LengthM\", \"CostFactor\", \"Steps\", \"Highway\") FROM STDIN (FORMAT BINARY)"))
+        "COPY walk_edges_new (\"Source\", \"Target\", \"Geom\", \"LengthM\", \"CostFactor\", \"Steps\", \"Highway\") FROM STDIN (FORMAT BINARY)"))
     {
         foreach (var e in edges)
         {
@@ -216,11 +264,53 @@ await using (var conn = await dataSource.OpenConnectionAsync())
         }
         await writer.CompleteAsync();
     }
-    await tx.CommitAsync();
-    await using (var analyze = new NpgsqlCommand("ANALYZE walk_edges", conn)) await analyze.ExecuteNonQueryAsync();
+    Console.WriteLine($"4a) walk_edges_new 에 {edges.Count:N0}행 ({total.Elapsed:mm\\:ss})");
+
+    // 4b) 인덱스. B1ms(메모리 2GB)라 maintenance_work_mem 은 이 세션에서만 조금 올린다
+    await Exec(conn, """
+        SET maintenance_work_mem = '256MB';
+        ALTER TABLE walk_edges_new ADD CONSTRAINT "PK_walk_edges_new" PRIMARY KEY ("Id");
+        CREATE INDEX "IX_walk_edges_new_Geom" ON walk_edges_new USING gist ("Geom");
+        ANALYZE walk_edges_new;
+        """);
+    Console.WriteLine($"4b) 인덱스 ({total.Elapsed:mm\\:ss})");
+
+    // 4c) 지금보다 크게 줄었으면 바꾸지 않는다
+    var current = await Scalar<long>(conn, "SELECT count(*) FROM walk_edges");
+    if (WalkSwap.Check(current, edges.Count, argsMap.ContainsKey("force")) is { } refusal)
+    {
+        await Exec(conn, "DROP TABLE walk_edges_new");
+        Console.Error.WriteLine($"바꾸지 않았습니다: {refusal}");
+        return 5;
+    }
+
+    // 4d) 바꾸기. 경로 요청이 읽는 중이면 끝날 때까지 기다리되 30초를 넘기면 그만둔다 (예전 도로망은 그대로)
+    await using (var tx = await conn.BeginTransactionAsync())
+    {
+        await Exec(conn, """
+            SET LOCAL lock_timeout = '30s';
+            DROP TABLE walk_edges;
+            ALTER TABLE walk_edges_new RENAME TO walk_edges;
+            ALTER TABLE walk_edges RENAME CONSTRAINT "PK_walk_edges_new" TO "PK_walk_edges";
+            ALTER INDEX "IX_walk_edges_new_Geom" RENAME TO "IX_walk_edges_Geom";
+            """, tx);
+        await tx.CommitAsync();
+    }
+    Console.WriteLine($"4) walk_edges 교체 {current:N0} → {edges.Count:N0}행 ({total.Elapsed:mm\\:ss})");
 }
-Console.WriteLine($"4) walk_edges 에 {edges.Count:N0}행 반영 ({total.Elapsed:mm\\:ss})");
 return 0;
+
+static async Task Exec(NpgsqlConnection conn, string sql, NpgsqlTransaction? tx = null)
+{
+    await using var cmd = new NpgsqlCommand(sql, conn, tx) { CommandTimeout = 1800 };
+    await cmd.ExecuteNonQueryAsync();
+}
+
+static async Task<T> Scalar<T>(NpgsqlConnection conn, string sql)
+{
+    await using var cmd = new NpgsqlCommand(sql, conn) { CommandTimeout = 600 };
+    return (T)(await cmd.ExecuteScalarAsync())!;
+}
 
 // ── 도우미 ─────────────────────────────────────────────────────────────────
 

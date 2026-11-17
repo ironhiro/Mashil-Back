@@ -3,7 +3,7 @@
 #   ci-deploy.sh <suffix> <host> <api-image> <worker-image> <migrate-image> <release>
 #     suffix: "-dev" 또는 "" (운영)
 #     release: /healthz/version 이 돌려줄 이름 (운영은 v2026.11.17 같은 태그, 개발은 main-<sha7>)
-# 순서: 마이그레이션 Job → API → Worker → 점검. 점검이 실패하면 API·Worker 를 직전 이미지로 되돌린다.
+# 순서: 마이그레이션 Job → API → Worker → 점검 → (있으면) 도보 도로망 Job 이미지. 점검이 실패하면 API·Worker 를 직전 이미지로 되돌린다.
 # 마이그레이션은 되돌리지 않는다 — expand/contract 규칙(새 스키마는 직전 API 와도 호환, OPS-03) 덕에 직전 이미지가 그대로 돈다.
 # 환경 변수: RG (리소스 그룹), EXPECT_WEB (선택: /version.json 의 web 값이 이것과 같아야 한다)
 set -euo pipefail
@@ -66,4 +66,11 @@ if ! check; then
   curl -fsS --retry 12 --retry-delay 10 --retry-all-errors "https://${HOST}/healthz/ready" >/dev/null \
     && echo "되돌림 완료" || echo "::error::되돌린 뒤에도 준비되지 않았다. 직접 확인 필요"
   exit 1
+fi
+
+# 5) 도보 도로망 Job (있으면): 이 배포와 같은 커밋의 임포터로 바꿔 둔다. 실행은 Job 일정대로 (deploy/azure/walk-job.sh)
+WALK="mashil-walkimport${SUFFIX}"
+OSM_IMG="${MIGRATE_IMG/mashil-migrate/mashil-osmimport}"
+if az containerapp job show -n "$WALK" -g "$RG" -o none 2>/dev/null; then
+  az containerapp job update -n "$WALK" -g "$RG" --image "$OSM_IMG" -o none     && echo "${WALK}: ${OSM_IMG##*/}"     || echo "::warning::${WALK} 이미지를 못 바꿨다 (도로망 갱신만 영향, 서비스는 정상)"
 fi

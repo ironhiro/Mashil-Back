@@ -1,6 +1,6 @@
 # 백엔드 CI (08-infrastructure §4)
 #   모든 push·PR: 빌드 + 단위 테스트 + 통합 테스트 (PostGIS 서비스 컨테이너, MASHIL_TEST_DB)
-#   main push: 이미지 3개(api·worker·migrate)를 GHCR 에 올림. 태그 = git sha + latest. 인증은 GITHUB_TOKEN 만.
+#   main push: 이미지 4개(api·worker·migrate·osmimport)를 GHCR 에 올림. 태그 = git sha + latest. 인증은 GITHUB_TOKEN 만.
 #     api 이미지에는 웹(Mashil-Front main)의 vite build 를 wwwroot 로 담는다 (한 도메인에서 웹 + API).
 #   배포 (Azure Container Apps, docs/AZURE.md, docs/RELEASE.md): 저장소 변수 AZURE_DEPLOY=true 일 때만
 #     main push 또는 repository_dispatch(web-updated) → 개발 서버 (toilets-dev.ironhiro.dev)
@@ -100,7 +100,7 @@ jobs:
     strategy:
       fail-fast: true
       matrix:
-        target: [api, worker, migrate]
+        target: [api, worker, migrate, osmimport]
     steps:
       - uses: actions/checkout@v5
 
@@ -253,6 +253,9 @@ jobs:
           for a in "$DEV_API" "$DEV_WORKER" "$DEV_MIGRATE"; do
             docker buildx imagetools create -t "${a%:*}:$VERSION" "$a"
           done
+          # 도보 도로망 임포터: 같은 실행에서 만든 이미지 (ci-deploy.sh 가 Job 이 있으면 쓴다). 없어도 배포는 계속
+          OSM="${DEV_MIGRATE%:*}"; OSM="${OSM/mashil-migrate/mashil-osmimport}"
+          docker buildx imagetools create -t "$OSM:$VERSION" "$OSM:${DEV_MIGRATE##*:}"             || echo "::warning::osmimport 이미지에 버전 태그를 못 붙였다 (도로망 갱신 Job 만 영향)"
           WEB=$(curl -fsS https://toilets-dev.ironhiro.dev/version.json | jq -r .web)
           echo "web=$WEB" >> "$GITHUB_OUTPUT"
           echo "api=${DEV_API%:*}:$VERSION" >> "$GITHUB_OUTPUT"

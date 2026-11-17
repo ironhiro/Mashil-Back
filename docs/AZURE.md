@@ -48,6 +48,20 @@ dotnet run --project tools/Mashil.OsmImport -- --pbf data/osm/south-korea-latest
 az postgres flexible-server firewall-rule delete -g rg-mashil -s "${PG_HOST%%.*}" -n admin-pc --yes
 ```
 
+### 도보 도로망 갱신 (Container Apps Job, 월 1회)
+
+`bash deploy/azure/walk-job.sh` 가 `mashil-walkimport-dev`(매월 2일 03:00 KST)와 `mashil-walkimport`(3일)를 만든다.
+Job 은 Geofabrik 한국 PBF 를 받아 `.md5` 를 확인하고, `walk_edges_new` 에 넣어 인덱스를 만든 뒤 건수가 지금의 80% 이상이면
+테이블을 바꾼다 (아니면 그대로 두고 실패로 끝난다). 이미지는 CI 가 배포마다 같은 커밋으로 바꾼다.
+
+```bash
+az containerapp job start -g rg-mashil -n mashil-walkimport-dev            # 바로 한 번
+az containerapp job execution list -g rg-mashil -n mashil-walkimport-dev -o table
+az containerapp logs show -g rg-mashil -n mashil-walkimport-dev --type console   # (실행 중) 로그
+```
+
+교체하는 동안 DB 에는 도로망이 잠깐 두 벌 있다 (약 1GB 더). 줄어든 것이 맞으면(지역을 좁혔을 때 등) PC 에서 `--force` 로 돌린다.
+
 ### 앱 설정 (추가로 넣을 것)
 
 `provision.sh` 는 DB·JWT·인그레스·도보 경로만 넣는다. 로그인 제공자(`OAuth:*`, docs/AUTH.md)와 Sentry DSN 은 준비되면 넣는다.
