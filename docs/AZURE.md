@@ -104,9 +104,9 @@ GitHub 환경 `production` 에 승인자(Required reviewers)를 걸어 두면 �
 |---|---|
 | Mashil-Back main push | 개발 (`toilets-dev`) |
 | `repository_dispatch` `web-updated` (웹 main 이 바뀜) | 개발 |
-| Actions → ci → Run workflow, target=`prod` | 운영 (`toilets`) |
+| 태그 `v2026.11.17` push (`tools/release.sh`) | 운영 (`toilets`) — 개발 이미지를 그대로 승격, [RELEASE.md](RELEASE.md) |
 
-순서: 이미지 빌드(api 는 웹 포함) → 마이그레이션 Job → API 이미지 교체(새 리비전이 준비되면 트래픽 전환) → Worker → 헬스체크.
+순서: 이미지 빌드(api 는 웹 포함) → 마이그레이션 Job → API 이미지 교체(새 리비전이 준비되면 트래픽 전환) → Worker → 점검(`/healthz/version` 으로 새 리비전·커밋 확인). 점검이 실패하면 직전 이미지로 자동 되돌림 (`deploy/azure/ci-deploy.sh`).
 마이그레이션은 expand/contract 규칙(OPS-03)을 지킨다 — 새 스키마가 직전 API 와도 동작해야 한다.
 
 웹만 바꿨을 때는 Mashil-Back 의 ci 를 수동 실행(target=`dev`)하거나, 웹 CI 에서 dispatch 를 보낸다
@@ -116,7 +116,7 @@ GitHub 환경 `production` 에 승인자(Required reviewers)를 걸어 두면 �
 
 ```bash
 az containerapp revision list -g rg-mashil -n mashil-api -o table
-az containerapp update -g rg-mashil -n mashil-api --image ghcr.io/ironhiro/mashil-api:<이전 sha>
+az containerapp update -g rg-mashil -n mashil-api --image ghcr.io/ironhiro/mashil-api:<이전 버전 태그> --set-env-vars MASHIL_RELEASE=<이전 버전 태그>
 ```
 
 ## 비용 (2026-11 소매가 기준 추정)
