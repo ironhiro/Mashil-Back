@@ -24,6 +24,7 @@ public sealed record GeocodeBatchResult(int Processed, int Matched, int NoMatch,
 /// <item>도로명 → 지번 순으로 상세 주소를 뺀 질의를 만든다 (<see cref="GeocodeQueryBuilder"/>)</item>
 /// <item>캐시에 있으면 API 를 부르지 않는다. 일일 예산을 넘으면 멈춘다</item>
 /// <item>원문과 도로명·본번이 같은 후보만 인정하고, 여러 개면 개방자치단체코드로 추정한 시도와 맞는 후보를 고른다</item>
+/// <item>Kakao 로 못 찾으면 같은 질의로 브이월드(정부 주소 DB)에 묻는다 (<see cref="VWorldGeocoder"/>, 설정돼 있을 때만)</item>
 /// <item>주소로 못 찾으면 화장실 이름으로 찾는다 (<see cref="PlaceNameSearch"/>). 같은 시군구·같은 이름일 때만, 확인용 이슈를 남긴다</item>
 /// <item>결과는 화장실에 직접 쓰지 않고 <c>toilet_overrides(location, Geocode)</c> 로 저장 → 재임포트해도 유지</item>
 /// <item>실패·모호·시도 불일치는 정규화 이슈로 남긴다</item>
@@ -35,7 +36,8 @@ public sealed class GeocodingService(
     GeocodingOptions? options = null,
     TimeProvider? clock = null,
     Func<TimeSpan, CancellationToken, Task>? delay = null,
-    IPlaceSearcher? places = null)
+    IPlaceSearcher? places = null,
+    IAddressGeocoder? fallback = null)
 {
     private readonly IPlaceSearcher? _places = places ?? geocoder as IPlaceSearcher;
     private readonly GeocodingOptions _opts = options ?? new GeocodingOptions();
@@ -70,31 +72,42 @@ public sealed class GeocodingService(
             GeocodeCacheEntry? hit = null;
             var stop = false;
 
-            foreach (var q in queries)
+            // 질의를 차례로: 캐시 → API → 검증. 맞는 게 나오면 멈춘다
+            async Task LookupAsync(IAddressGeocoder g, string prefix)
             {
-                if (q.IsRegionOnly) continue; // 번호 없는 주소 — 다음 질의(보통 지번)로
-                var cached = await db.GeocodeCache.FindAsync([q.Query], ct);
-                if (cached is null)
+                foreach (var q in queries)
                 {
-                    if (usage.Calls >= _opts.DailyBudget) { budgetOut = stop = true; break; }
-
-                    IReadOnlyList<GeocodeCandidate> candidates;
-                    try
+                    if (q.IsRegionOnly) continue; // 번호 없는 주소 — 다음 질의(보통 지번)로
+                    var key = prefix + q.Query;
+                    var cached = await db.GeocodeCache.FindAsync([key], ct);
+                    if (cached is null)
                     {
-                        usage.Calls++; calls++;
-                        candidates = await geocoder.SearchAsync(q.Query, ct);
+                        if (usage.Calls >= _opts.DailyBudget) { budgetOut = stop = true; return; }
+
+                        IReadOnlyList<GeocodeCandidate> candidates;
+                        try
+                        {
+                            usage.Calls++; calls++;
+                            candidates = await g.SearchAsync(q.Query, ct);
+                        }
+                        catch (GeocoderUnavailableException ex) { error = ex.Message; unavailable = stop = true; return; }
+                        catch (HttpRequestException ex) { error = ex.StatusCode is { } sc ? $"HTTP {(int)sc}" : ex.Message; stop = true; return; } // 일시 오류 — 이 화장실은 다음 배치에서 다시
+                        finally { await _delay(TimeSpan.FromMilliseconds(_opts.RequestDelayMs), ct); }
+
+                        cached = Choose(q, candidates, expectedSido);
+                        cached.QueryKey = key;
+                        db.GeocodeCache.Add(cached);
                     }
-                    catch (GeocoderUnavailableException ex) { error = ex.Message; unavailable = stop = true; break; }
-                    catch (HttpRequestException ex) { error = ex.StatusCode is { } sc ? $"HTTP {(int)sc}" : ex.Message; stop = true; break; } // 일시 오류 — 이 화장실은 다음 배치에서 다시
-                    finally { await _delay(TimeSpan.FromMilliseconds(_opts.RequestDelayMs), ct); }
+                    else hits++;
 
-                    cached = Choose(q, candidates, expectedSido);
-                    db.GeocodeCache.Add(cached);
+                    if (cached.Status == GeocodeCacheStatus.Matched) { hit = cached; return; }
                 }
-                else hits++;
-
-                if (cached.Status == GeocodeCacheStatus.Matched) { hit = cached; break; }
             }
+
+            await LookupAsync(geocoder, "");
+            // Kakao 가 못 찾은 주소 → 정부 주소 DB (브이월드)
+            if (hit is null && !stop && fallback is not null) await LookupAsync(fallback, VWorldGeocoder.CachePrefix);
+            var byFallback = hit?.QueryKey.StartsWith(VWorldGeocoder.CachePrefix, StringComparison.Ordinal) == true;
 
             // 주소로 못 찾음 → 이름으로 (예: "중랑구 망우3동 공영주차장")
             var place = hit is null && !stop && _places is not null ? PlaceNameSearch.Build(t.Name, t.RoadAddress, t.LotAddress) : null;
@@ -131,6 +144,8 @@ public sealed class GeocodingService(
             if (hit is not null)
             {
                 SetGeocodeLocation(t, hit.Latitude!.Value, hit.Longitude!.Value, now);
+                if (byFallback)
+                    AddIssue(t, IssueType.FallbackGeocode, IssueSeverity.Info, hit.QueryKey[VWorldGeocoder.CachePrefix.Length..], $"Kakao 로 못 찾아 브이월드(정부 주소 DB)로 찾은 위치: {hit.MatchedAddress}", now);
                 if (byName)
                     AddIssue(t, IssueType.PlaceNameMatch, IssueSeverity.Info, place!.Query, $"주소로 못 찾아 이름으로 찾은 위치: {hit.MatchedAddress} — 확인 권장", now);
                 if (expectedSido is not null && hit.MatchedSido is not null && hit.MatchedSido != expectedSido)

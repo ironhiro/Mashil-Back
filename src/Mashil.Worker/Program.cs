@@ -77,7 +77,9 @@ try
     // --- 지오코딩 (Kakao Local API) — 키가 없으면 GeocodingService 를 등록하지 않음 (워커가 idle) ---
     builder.Services.Configure<GeocodeWorkerOptions>(builder.Configuration.GetSection("Geocode"));
     builder.Services.AddHttpClient(nameof(KakaoAddressGeocoder), c => c.Timeout = TimeSpan.FromSeconds(10));
+    builder.Services.AddHttpClient(nameof(VWorldGeocoder), c => c.Timeout = TimeSpan.FromSeconds(10));
     var kakaoKey = builder.Configuration["Kakao:RestApiKey"];
+    var vworldKey = builder.Configuration["VWorld:ApiKey"];
     if (!string.IsNullOrWhiteSpace(kakaoKey))
     {
         builder.Services.AddScoped<IAddressGeocoder>(sp => new KakaoAddressGeocoder(
@@ -85,9 +87,12 @@ try
         builder.Services.AddScoped(sp =>
         {
             var o = sp.GetRequiredService<IOptions<GeocodeWorkerOptions>>().Value;
+            // 브이월드(정부 주소 DB): Kakao 가 못 찾은 주소만. 키가 없으면 쓰지 않는다
+            var vworld = string.IsNullOrWhiteSpace(vworldKey) ? null
+                : new VWorldGeocoder(sp.GetRequiredService<IHttpClientFactory>().CreateClient(nameof(VWorldGeocoder)), vworldKey);
             return new GeocodingService(sp.GetRequiredService<MashilDbContext>(), sp.GetRequiredService<IAddressGeocoder>(),
                 new GeocodingOptions { BatchSize = o.BatchSize, RequestDelayMs = o.RequestDelayMs, DailyBudget = o.DailyBudget },
-                sp.GetRequiredService<TimeProvider>());
+                sp.GetRequiredService<TimeProvider>(), fallback: vworld);
         });
     }
     builder.Services.AddHostedService<GeocodeWorker>();

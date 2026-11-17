@@ -52,6 +52,8 @@ public enum IssueType
     PlaceNameMatch = 11,
     /// <summary>일일 임포트에서 주소가 바뀌었지만 좌표를 유지함 (Info, 실제 이전이면 관리자가 좌표 수정).</summary>
     AddressChanged = 12,
+    /// <summary>Kakao 로 못 찾아 브이월드(정부 주소 DB)로 찾음. 확인용 (Info).</summary>
+    FallbackGeocode = 13,
 }
 
 public enum IssueSeverity { Info = 0, Warning = 1, Error = 2 }

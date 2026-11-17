@@ -79,6 +79,21 @@ az containerapp update -g rg-mashil -n mashil-worker --set-env-vars "Kakao__Rest
 - 처음 5만여 곳은 초당 약 2.5건으로 6시간쯤 걸린다. 하루 예산은 `Geocode:DailyBudget`(80,000) — 카카오 무료 한도(100,000)를
   운영·개발이 나눠 쓰므로 개발은 운영이 끝난 뒤에 돌린다. 개발 DB 에 운영의 `geocode_cache` 를 복사해 두면 API 를 거의 부르지 않는다.
 
+#### 브이월드 (선택) — 카카오가 못 찾은 주소
+
+카카오가 못 찾은 주소만 같은 질의로 브이월드(국토부 정부 주소 DB, Geocoder API 2.0)에 묻는다(`VWorld:ApiKey`).
+키가 없으면 쓰지 않는다. 결과는 카카오와 같은 도로명·동 + 본번 검증을 거치고, 시군구가 바뀌거나 산 지번이 일반 지번으로
+바뀐 결과는 버린다. 찾은 곳에는 Info 이슈 `FallbackGeocode`("브이월드로 찾음")가 남는다. 캐시 키는 `vworld:<질의>`.
+
+```bash
+# vworld.kr 오픈API 인증키. 화면에 찍지 않는다
+az containerapp secret set -g rg-mashil -n mashil-worker --secrets "vworld-key=<키>" -o none
+az containerapp update -g rg-mashil -n mashil-worker --set-env-vars "VWorld__ApiKey=secretref:vworld-key" -o none
+```
+
+- 무료 한도는 하루 40,000건. 호출은 카카오와 같은 `Geocode:DailyBudget` 에 센다.
+- 질의 규칙을 바꾼 뒤 못 찾은 곳을 다시 돌리려면 `tools/retry_nomatch_geocode.sql`.
+
 ## 배포 자격 증명 (CI)
 
 ```bash
