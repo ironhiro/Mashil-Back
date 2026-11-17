@@ -87,12 +87,22 @@ public sealed class ConsentOptions
 {
     public const string Section = "Consents";
 
-    public ConsentDocument[] Documents { get; set; } =
+    /// <summary>
+    /// 설정에 적은 현재 문서들. 초기값은 비워 둔다 — 설정 바인더는 배열 초기값 뒤에 설정 항목을 덧붙이므로
+    /// 기본값을 여기 두면 같은 문서가 두 번(코드 v1 + 설정 vN) 들어간다 (#15). 실제로 쓰는 목록은 <see cref="Current"/>.
+    /// </summary>
+    public ConsentDocument[] Documents { get; set; } = [];
+
+    /// <summary>설정에 문서가 없을 때 쓰는 기본 문서 (각 v1).</summary>
+    public static IReadOnlyList<ConsentDocument> DefaultDocuments { get; } =
     [
         new() { Type = Domain.ConsentDocType.Terms, Version = "1" },
         new() { Type = Domain.ConsentDocType.Privacy, Version = "1" },
         new() { Type = Domain.ConsentDocType.LocationTerms, Version = "1" },
     ];
+
+    /// <summary>현재 동의 대상 문서. 설정이 비었으면 기본 문서.</summary>
+    public IReadOnlyList<ConsentDocument> Current => Documents.Length > 0 ? Documents : DefaultDocuments;
 
     /// <summary>true 면 동의 전에는 쓰기(평점·댓글·변경 요청·신고)를 403 consent_required 로 막는다.</summary>
     public bool EnforceOnWrite { get; set; } = true;
