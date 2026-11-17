@@ -245,6 +245,39 @@ public class GeocodingServiceDbTests
     }
 
     [DbFact]
+    public async Task VWorld_is_asked_only_when_kakao_finds_nothing_and_is_flagged()
+    {
+        await using var tdb = await TestDatabase.CreateAsync();
+        await Import(tdb, Files.Of("K1", "K2"));
+
+        var kakao = new FakeGeocoder(_ => []);
+        var vworld = new FakeGeocoder(_ => [At(37.59, 126.97)]);
+        await using var db = tdb.NewContext();
+        var r = await new GeocodingService(db, kakao, new GeocodingOptions { RequestDelayMs = 0 }, fallback: vworld).RunBatchAsync();
+        Assert.Equal(2, r.Matched);
+        Assert.Single(kakao.Queries);   // 같은 주소: 두 번째는 캐시
+        Assert.Single(vworld.Queries);
+        Assert.True(await db.GeocodeCache.AnyAsync(c => c.QueryKey == "vworld:서울특별시 종로구 테스트로 1" && c.Status == GeocodeCacheStatus.Matched));
+
+        await using var check = tdb.NewContext();
+        var t = await check.Toilets.Include(x => x.Issues).FirstAsync(x => x.ManagementNo == "K1");
+        Assert.Equal(37.59, t.Latitude);
+        Assert.Single(t.Issues, i => i.Type == IssueType.FallbackGeocode && i.Status == IssueStatus.Open);
+    }
+
+    [DbFact]
+    public async Task VWorld_is_not_asked_when_kakao_matches()
+    {
+        await using var tdb = await TestDatabase.CreateAsync();
+        await Import(tdb, Files.Of("K1"));
+
+        var vworld = new FakeGeocoder(_ => [At(37.59, 126.97)]);
+        await using var db = tdb.NewContext();
+        await new GeocodingService(db, new FakeGeocoder(_ => [At(37.57, 126.98)]), new GeocodingOptions { RequestDelayMs = 0 }, fallback: vworld).RunBatchAsync();
+        Assert.Empty(vworld.Queries);
+    }
+
+    [DbFact]
     public async Task Name_that_does_not_match_leaves_no_match()
     {
         await using var tdb = await TestDatabase.CreateAsync();
