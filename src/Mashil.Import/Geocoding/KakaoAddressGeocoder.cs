@@ -30,7 +30,11 @@ public sealed class KakaoAddressGeocoder(HttpClient http, string restApiKey) : I
         using var res = await http.SendAsync(req, ct);
 
         if (res.StatusCode is HttpStatusCode.TooManyRequests or HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
-            throw new GeocoderUnavailableException($"Kakao 주소 검색 HTTP {(int)res.StatusCode}");
+        {
+            // 본문에 이유가 온다 (예: 허용 IP 밖에서 부르면 IP 불일치). 키는 들어 있지 않다
+            var reason = await res.Content.ReadAsStringAsync(ct);
+            throw new GeocoderUnavailableException($"Kakao 주소 검색 HTTP {(int)res.StatusCode} {reason[..Math.Min(reason.Length, 200)]}");
+        }
         res.EnsureSuccessStatusCode();
 
         var body = await res.Content.ReadFromJsonAsync<Response>(ct);
