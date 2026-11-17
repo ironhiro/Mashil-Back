@@ -8,7 +8,11 @@
 #   기본 인자 --download: Geofabrik 한국 PBF + .md5 → walk_edges_new → 건수 확인 → 교체 (tools/Mashil.OsmImport)
 #   4 vCPU / 8GiB (한국 전체를 메모리에 올린다. PC 측정 최대 약 2.5GB), 최대 30분, 재시도 없음
 # 비밀값: DB 연결 문자열은 ~/.mashil/azure.env 에서 만들어 Job 시크릿에만 넣는다 (화면에 찍지 않음).
-# 서울 보행 네트워크(--seoul)는 아직 켜지 않는다: OSM 망과 경계에서 이어지지 않아 경계를 넘는 경로가 끊긴다.
+# 서울 보행 네트워크(--seoul, 횡단보도·육교·지하철 출입구까지 이어진 보행자용 망)를 켜려면:
+#   bash deploy/azure/walk-job.sh seoul-dev   (개발 Job 에 키 시크릿 + 인자 --download --seoul)
+#   bash deploy/azure/walk-job.sh seoul-prod
+#   키는 Mashil.Api 사용자 비밀 SeoulOpenData:ApiKey 에서 읽어 시크릿에만 넣는다 (화면에 찍지 않음).
+#   서울 API 는 HTTP 만 받아 키가 평문으로 오간다 (SeoulWalkNetwork.cs). 키가 새면 열린데이터광장에서 재발급.
 # 다시 돌려도 이미 있는 Job 은 건너뛴다. 바로 한 번 돌리려면: az containerapp job start -g rg-mashil -n mashil-walkimport-dev
 set -euo pipefail
 
@@ -34,11 +38,22 @@ make_job() { # <이름> <DB> <cron (UTC)>
     --secrets "db=$cs" --env-vars "ConnectionStrings__Postgres=secretref:db" -o none
 }
 
+enable_seoul() { # <이름>
+  local name="$1" key
+  key=$(dotnet user-secrets list --project "$(dirname "$0")/../../src/Mashil.Api" | sed -n 's/^SeoulOpenData:ApiKey = //p')
+  [ -n "$key" ] || { echo "Mashil.Api 사용자 비밀에 SeoulOpenData:ApiKey 가 없다"; exit 1; }
+  echo "== $name: 서울 보행 네트워크 켜기"
+  az containerapp job secret set -g "$RG" -n "$name" --secrets "seoul-key=$key" -o none
+  az containerapp job update -g "$RG" -n "$name"     --set-env-vars "SeoulOpenData__ApiKey=secretref:seoul-key" --args "--download" "--seoul" -o none
+}
+
 case "$STAGE" in
+  seoul-dev)  enable_seoul mashil-walkimport-dev; exit 0 ;;
+  seoul-prod) enable_seoul mashil-walkimport; exit 0 ;;
   dev)  make_job mashil-walkimport-dev mashil_dev "0 18 1 * *" ;;
   prod) make_job mashil-walkimport     mashil     "0 18 2 * *" ;;
   all)  make_job mashil-walkimport-dev mashil_dev "0 18 1 * *"
         make_job mashil-walkimport     mashil     "0 18 2 * *" ;;
-  *) echo "사용법: walk-job.sh [dev|prod|all]"; exit 2 ;;
+  *) echo "사용법: walk-job.sh [dev|prod|all|seoul-dev|seoul-prod]"; exit 2 ;;
 esac
 echo "실행 기록: az containerapp job execution list -g $RG -n mashil-walkimport-dev -o table"

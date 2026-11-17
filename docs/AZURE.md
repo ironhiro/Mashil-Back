@@ -60,6 +60,10 @@ az containerapp job execution list -g rg-mashil -n mashil-walkimport-dev -o tabl
 az containerapp logs show -g rg-mashil -n mashil-walkimport-dev --type console   # (실행 중) 로그
 ```
 
+서울 보행 네트워크까지 넣으려면 `bash deploy/azure/walk-job.sh seoul-dev` (확인 뒤 `seoul-prod`). 서울 안은 서울시 망으로 바꾸고,
+경계와 서울 링크가 없는 칸(공원·단지)은 12m 안의 가까운 노드끼리 짧은 간선(`Highway = stitch`)으로 잇는다 (`NetworkStitcher`).
+수도권 범위 시험(11-17): 연결 231개로 가장 큰 연결 성분이 전체 길이의 55% → 98%, 연결 간선 평균 6.6m.
+
 교체하는 동안 DB 에는 도로망이 잠깐 두 벌 있다 (약 1GB 더). 줄어든 것이 맞으면(지역을 좁혔을 때 등) PC 에서 `--force` 로 돌린다.
 
 ### 앱 설정 (추가로 넣을 것)
