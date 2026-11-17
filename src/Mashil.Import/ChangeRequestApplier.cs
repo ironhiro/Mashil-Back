@@ -51,7 +51,7 @@ public static class ChangeRequestApplier
 
         var applied = new List<string>();
         var ignored = new List<string>();
-        var (roadBefore, lotBefore) = (t.RoadAddress, t.LotAddress);
+        var (roadBefore, lotBefore, nameBefore) = (t.RoadAddress, t.LotAddress, t.Name);
 
         if (cr.Kind == ChangeRequestKind.Delete)
         {
@@ -81,7 +81,7 @@ public static class ChangeRequestApplier
             else if (p.TryGetProperty("latitude", out _) || p.TryGetProperty("longitude", out _)) ignored.Add("latitude/longitude");
         }
 
-        ToiletRecompute.AfterOverrides(t, roadBefore, lotBefore, ctx, now);
+        ToiletRecompute.AfterOverrides(t, roadBefore, lotBefore, ctx, now, nameBefore);
         t.UpdatedAt = now;
         await db.SaveChangesAsync(ct);
         return new Result(t.Id, applied, ignored);

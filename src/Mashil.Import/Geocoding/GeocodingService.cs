@@ -24,6 +24,7 @@ public sealed record GeocodeBatchResult(int Processed, int Matched, int NoMatch,
 /// <item>도로명 → 지번 순으로 상세 주소를 뺀 질의를 만든다 (<see cref="GeocodeQueryBuilder"/>)</item>
 /// <item>캐시에 있으면 API 를 부르지 않는다. 일일 예산을 넘으면 멈춘다</item>
 /// <item>원문과 도로명·본번이 같은 후보만 인정하고, 여러 개면 개방자치단체코드로 추정한 시도와 맞는 후보를 고른다</item>
+/// <item>주소로 못 찾으면 화장실 이름으로 찾는다 (<see cref="PlaceNameSearch"/>). 같은 시군구·같은 이름일 때만, 확인용 이슈를 남긴다</item>
 /// <item>결과는 화장실에 직접 쓰지 않고 <c>toilet_overrides(location, Geocode)</c> 로 저장 → 재임포트해도 유지</item>
 /// <item>실패·모호·시도 불일치는 정규화 이슈로 남긴다</item>
 /// </list>
@@ -33,8 +34,10 @@ public sealed class GeocodingService(
     IAddressGeocoder geocoder,
     GeocodingOptions? options = null,
     TimeProvider? clock = null,
-    Func<TimeSpan, CancellationToken, Task>? delay = null)
+    Func<TimeSpan, CancellationToken, Task>? delay = null,
+    IPlaceSearcher? places = null)
 {
+    private readonly IPlaceSearcher? _places = places ?? geocoder as IPlaceSearcher;
     private readonly GeocodingOptions _opts = options ?? new GeocodingOptions();
     private readonly TimeProvider _clock = clock ?? TimeProvider.System;
     private readonly Func<TimeSpan, CancellationToken, Task> _delay = delay ?? Task.Delay;
@@ -93,6 +96,33 @@ public sealed class GeocodingService(
                 if (cached.Status == GeocodeCacheStatus.Matched) { hit = cached; break; }
             }
 
+            // 주소로 못 찾음 → 이름으로 (예: "중랑구 망우3동 공영주차장")
+            var place = hit is null && !stop && _places is not null ? PlaceNameSearch.Build(t.Name, t.RoadAddress, t.LotAddress) : null;
+            if (place is not null)
+            {
+                var cached = await db.GeocodeCache.FindAsync([place.CacheKey], ct);
+                if (cached is null)
+                {
+                    if (usage.Calls >= _opts.DailyBudget) budgetOut = stop = true;
+                    else
+                    {
+                        try
+                        {
+                            usage.Calls++; calls++;
+                            var found = await _places!.SearchPlacesAsync(place.Query, ct);
+                            cached = PlaceNameSearch.Choose(place, found, expectedSido);
+                            db.GeocodeCache.Add(cached);
+                        }
+                        catch (GeocoderUnavailableException ex) { error = ex.Message; unavailable = stop = true; }
+                        catch (HttpRequestException ex) { error = ex.StatusCode is { } sc ? $"HTTP {(int)sc}" : ex.Message; stop = true; }
+                        finally { await _delay(TimeSpan.FromMilliseconds(_opts.RequestDelayMs), ct); }
+                    }
+                }
+                else hits++;
+                if (cached?.Status == GeocodeCacheStatus.Matched) hit = cached;
+            }
+            var byName = place is not null && hit?.QueryKey == place.CacheKey;
+
             if (stop && hit is null) break; // 예산 소진·오류: 이 화장실은 미처리로 남긴다
 
             t.Issues.RemoveAll(i => i.FieldName == IssueFields.Geocode && i.Status == IssueStatus.Open);
@@ -101,6 +131,8 @@ public sealed class GeocodingService(
             if (hit is not null)
             {
                 SetGeocodeLocation(t, hit.Latitude!.Value, hit.Longitude!.Value, now);
+                if (byName)
+                    AddIssue(t, IssueType.PlaceNameMatch, IssueSeverity.Info, place!.Query, $"주소로 못 찾아 이름으로 찾은 위치: {hit.MatchedAddress} — 확인 권장", now);
                 if (expectedSido is not null && hit.MatchedSido is not null && hit.MatchedSido != expectedSido)
                     AddIssue(t, IssueType.RegionMismatch, IssueSeverity.Info, queryText, $"결과 {hit.MatchedSido} ≠ 기관코드 추정 {expectedSido}", now);
                 if (hit.CandidateCount > 1)
@@ -111,8 +143,9 @@ public sealed class GeocodingService(
             {
                 t.CoordinateSource = CoordinateSource.KakaoNoMatch; // 같은 주소로 다시 시도하지 않음 (주소가 바뀌면 재시도)
                 var note = queries.All(q => q.MainNo is null)
-                    ? "주소에 건물번호·지번이 없어 지역 대표 좌표만 나옴 — 관리자 좌표 입력 필요"
-                    : "주소로 좌표를 찾지 못함 — 관리자 좌표 입력 필요";
+                    ? "주소에 건물번호·지번이 없어 지역 대표 좌표만 나옴"
+                    : "주소로 좌표를 찾지 못함";
+                note += place is not null ? $", 이름(\"{place.Query}\")으로도 못 찾음 — 관리자 좌표 입력 필요" : " — 관리자 좌표 입력 필요";
                 AddIssue(t, IssueType.GeocodeNoMatch, IssueSeverity.Warning, queryText, note, now);
                 noMatch++;
             }
