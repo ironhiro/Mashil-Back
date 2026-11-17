@@ -11,6 +11,8 @@ assets/
 docs/
 tests/
 tools/
+# 도보 도로망 임포터만 이미지(osmimport)에 넣는다
+!tools/Mashil.OsmImport/
 deploy/
 
 # 받은 원본 데이터 (OSM 추출본 등). 이미지에 넣지 않는다

@@ -14,6 +14,8 @@ public readonly record struct WayClass(bool Walkable, float CostFactor, bool Ste
 /// </summary>
 public static class WalkableWays
 {
+    public const float StepsFactor = 1.6f;
+
     private static readonly HashSet<string> FootYes = ["yes", "designated", "permissive", "official"];
 
     public static WayClass Classify(TagsCollectionBase? tags)
@@ -29,7 +31,9 @@ public static class WalkableWays
 
         float? factor = highway switch
         {
-            "footway" or "pedestrian" or "path" or "living_street" or "corridor" or "steps" => 1.0f,
+            "footway" or "pedestrian" or "path" or "living_street" or "corridor" => 1.0f,
+            // 계단은 걷는 시간을 1.6배로 잡으므로(WalkPathFinder.StepsTimeFactor) 비용도 같게: 시간이 더 짧은 길이면 계단을 피한다
+            "steps" => StepsFactor,
             "cycleway" => FootYes.Contains(foot ?? "") ? 1.0f : 1.2f,
             "track" or "service" or "residential" or "unclassified" or "road" => 1.1f,
             "tertiary" or "tertiary_link" => 1.2f,
