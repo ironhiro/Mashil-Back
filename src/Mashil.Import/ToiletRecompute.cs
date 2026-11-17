@@ -9,11 +9,12 @@ namespace Mashil.Import;
 /// <list type="bullet">
 /// <item>개방시간 오버라이드가 있으면 덮어쓴 문장으로 스케줄을 다시 만든다</item>
 /// <item>주소가 바뀌면 지오코딩 좌표를 무효화하고 다시 지오코딩 대상으로 만든다</item>
+/// <item>주소·이름으로 못 찾았던 곳(KakaoNoMatch)은 이름이 바뀌어도 다시 시도한다 (이름으로도 찾으므로)</item>
 /// </list>
 /// </summary>
 public static class ToiletRecompute
 {
-    public static void AfterOverrides(Toilet t, string? roadBefore, string? lotBefore, NormalizationContext ctx, DateTime now)
+    public static void AfterOverrides(Toilet t, string? roadBefore, string? lotBefore, NormalizationContext ctx, DateTime now, string? nameBefore = null)
     {
         // 주소가 바뀌면 지오코딩 좌표는 더 이상 믿을 수 없다 (관리자·이전 좌표 오버라이드는 유지)
         var addressChanged = t.Id != 0 && (roadBefore != t.RoadAddress || lotBefore != t.LotAddress);
@@ -41,6 +42,12 @@ public static class ToiletRecompute
             t.Location = null;
             t.Latitude = t.Longitude = null;
             t.CoordinateSource = CoordinateSource.Unknown;
+        }
+
+        if (t.Id != 0 && nameBefore is not null && nameBefore != t.Name && t.CoordinateSource == CoordinateSource.KakaoNoMatch)
+        {
+            t.CoordinateSource = CoordinateSource.Unknown;
+            t.Issues.RemoveAll(i => i.Status == IssueStatus.Open && i.FieldName == IssueFields.Geocode);
         }
 
         if (t.Overrides.Any(o => o.IsActive && o.FieldName is OverrideFields.OpenHours or OverrideFields.OpenHoursDetail))

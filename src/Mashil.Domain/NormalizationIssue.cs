@@ -48,6 +48,8 @@ public enum IssueType
     RegionMismatch = 9,
     /// <summary>지오코딩 후보가 여러 개.</summary>
     Ambiguous = 10,
+    /// <summary>주소로 못 찾아 화장실 이름으로 찾은 좌표 (Info, 관리자 확인 권장).</summary>
+    PlaceNameMatch = 11,
 }
 
 public enum IssueSeverity { Info = 0, Warning = 1, Error = 2 }

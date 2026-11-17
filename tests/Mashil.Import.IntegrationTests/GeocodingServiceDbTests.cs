@@ -202,4 +202,68 @@ public class GeocodingServiceDbTests
         var o = await db.ToiletOverrides.SingleAsync();
         Assert.Equal(OverrideSource.ImportedCoordinate, o.Source);
     }
+
+    private sealed class FakeBoth(Func<string, IReadOnlyList<PlaceCandidate>> places) : IAddressGeocoder, IPlaceSearcher
+    {
+        public List<string> PlaceQueries { get; } = [];
+        public Task<IReadOnlyList<GeocodeCandidate>> SearchAsync(string query, CancellationToken ct) =>
+            Task.FromResult<IReadOnlyList<GeocodeCandidate>>([]); // 주소로는 늘 못 찾음
+        public Task<IReadOnlyList<PlaceCandidate>> SearchPlacesAsync(string query, CancellationToken ct)
+        {
+            PlaceQueries.Add(query);
+            return Task.FromResult(places(query));
+        }
+    }
+
+    [DbFact]
+    public async Task Falls_back_to_the_toilet_name_and_flags_it_for_review()
+    {
+        await using var tdb = await TestDatabase.CreateAsync();
+        await Import(tdb, Files.Raw(Files.Row("K1", name: "테스트 근린공원")));
+
+        var fake = new FakeBoth(_ => [new PlaceCandidate(37.58, 126.99, "테스트근린공원", "서울 종로구 명륜동 1", null)]);
+        var r = await Service(tdb, out var db, fake).RunBatchAsync();
+        await db.DisposeAsync();
+        Assert.Equal((1, 1), (r.Matched, r.ApiCalls - 1)); // 주소 1번 + 이름 1번
+        Assert.Equal(["종로구 테스트 근린공원"], fake.PlaceQueries);
+
+        await using var check = tdb.NewContext();
+        var t = await check.Toilets.Include(x => x.Issues).SingleAsync(x => x.ManagementNo == "K1");
+        Assert.Equal(CoordinateSource.KakaoGeocoded, t.CoordinateSource);
+        Assert.Equal(37.58, t.Latitude);
+        Assert.Single(t.Issues, i => i.Type == IssueType.PlaceNameMatch && i.Status == IssueStatus.Open);
+    }
+
+    [DbFact]
+    public async Task Name_that_does_not_match_leaves_no_match()
+    {
+        await using var tdb = await TestDatabase.CreateAsync();
+        await Import(tdb, Files.Raw(Files.Row("K1", name: "테스트 근린공원")));
+
+        var fake = new FakeBoth(_ => [new PlaceCandidate(37.58, 126.99, "다른 체육센터", "서울 종로구 명륜동 1", null)]);
+        var r = await Service(tdb, out var db, fake).RunBatchAsync();
+        await db.DisposeAsync();
+        Assert.Equal(1, r.NoMatch);
+
+        await using var check = tdb.NewContext();
+        var t = await check.Toilets.Include(x => x.Issues).SingleAsync(x => x.ManagementNo == "K1");
+        Assert.Equal(CoordinateSource.KakaoNoMatch, t.CoordinateSource);
+        Assert.Contains(t.Issues, i => i.Type == IssueType.GeocodeNoMatch && i.Note!.Contains("이름"));
+    }
+
+    [DbFact]
+    public async Task No_match_is_retried_when_the_name_changes()
+    {
+        await using var tdb = await TestDatabase.CreateAsync();
+        await Import(tdb, Files.Raw(Files.Row("K1", name: "테스트 근린공원")));
+        var none = new FakeBoth(_ => []);
+        await Service(tdb, out var db1, none).RunBatchAsync();
+        await db1.DisposeAsync();
+
+        await Import(tdb, Files.Raw(Files.Row("K1", name: "테스트 어린이공원"))); // 이름만 바뀜
+
+        await using var check = tdb.NewContext();
+        var t = await check.Toilets.SingleAsync(x => x.ManagementNo == "K1");
+        Assert.Equal(CoordinateSource.Unknown, t.CoordinateSource); // 다음 배치에서 새 이름으로 다시
+    }
 }

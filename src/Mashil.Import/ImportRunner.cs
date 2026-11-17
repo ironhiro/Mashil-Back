@@ -255,14 +255,14 @@ public sealed class ImportRunner(MashilDbContext db, ImportPolicy? policy = null
     public static int NormalizeRow(SourceRow row, Toilet toilet, NormalizationContext ctx, DateTime now)
     {
         var today = DateOnly.FromDateTime(now.AddHours(9));
-        var (roadBefore, lotBefore) = (toilet.RoadAddress, toilet.LotAddress);
+        var (roadBefore, lotBefore, nameBefore) = (toilet.RoadAddress, toilet.LotAddress, toilet.Name);
         var drafts = LocalDataToiletMapper.Apply(row, toilet, ctx, today);
 
         // 정규화가 다시 계산하는 Open 이슈만 맞춘다 (지오코딩 이슈는 GeocodingService 가 관리)
         var added = IssueSync.Replace(toilet, drafts, i => i.FieldName != IssueFields.Geocode, now);
 
         // 오버라이드 적용 + 주소 변경 시 지오코딩 무효화 + 개방시간 오버라이드 재파싱
-        ToiletRecompute.AfterOverrides(toilet, roadBefore, lotBefore, ctx, now);
+        ToiletRecompute.AfterOverrides(toilet, roadBefore, lotBefore, ctx, now, nameBefore);
 
         toilet.NormalizerVersion = NormalizerVersion;
         toilet.UpdatedAt = now;

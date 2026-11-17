@@ -140,6 +140,7 @@ public static class ToiletEndpoints
                     t.Id, t.ManagementNo, t.Name, t.Kind, t.KindCode, t.Status, t.Origin,
                     t.RoadAddress, t.LotAddress, t.Latitude, t.Longitude, t.CoordinateSource,
                     t.OpenHours, t.OpenHoursDetail, t.Phone, t.ScheduleStatus,
+                    t.LocalGovCode, t.ManagementOrg,
                     Schedules = t.Schedules.Select(s => new ScheduleRow(s.DayType, s.OpenMinute, s.CloseMinute, s.IsClosed)).ToList(),
                     t.MaleStallCount, t.MaleUrinalCount, t.MaleAccessibleStallCount, t.MaleAccessibleUrinalCount,
                     t.MaleChildStallCount, t.MaleChildUrinalCount,
@@ -160,6 +161,11 @@ public static class ToiletEndpoints
                          && (r.Status == ImportRunStatus.Succeeded || r.Status == ImportRunStatus.Skipped || r.Status == ImportRunStatus.PendingApproval))
                 .MaxAsync(r => r.FinishedAt, ct);
 
+            // 전화번호가 없으면 같은 관리기관의 대표 번호 (화면에는 "관리기관 전화"로 따로 표시)
+            var orgPhone = x.Phone is null && x.ManagementOrg is not null
+                ? await OrgPhone.FindAsync(db, x.LocalGovCode, x.ManagementOrg, ct)
+                : null;
+
             var nowKst = OpenStatusMapper.NowKst();
             var holidays = await OpenStatusMapper.HolidaysAroundAsync(db, nowKst, ct);
             return Results.Ok(new ToiletDetailDto(
@@ -176,7 +182,8 @@ public static class ToiletEndpoints
                 // 제보로 추가된 곳은 원본 파일과 무관하므로 원본 갱신 시각을 붙이지 않는다
                 new SourceInfoDto(SourceProvider(x.Origin), x.DataReferenceDate, x.CoordinateSource, x.EditedByPeople,
                     x.Origin == ToiletOrigin.UserSubmitted ? null : lastRefreshedAt),
-                x.AverageRating, x.RatingCount));
+                x.AverageRating, x.RatingCount,
+                x.ManagementOrg, orgPhone));
         })
         .WithName("GetToilet")
         .WithSummary("화장실 단건 상세")
@@ -376,7 +383,9 @@ public sealed record ToiletDetailDto(
     FacilitiesDto Facilities,
     SourceInfoDto Source,
     double? AverageRating,
-    int RatingCount);
+    int RatingCount,
+    string? ManagementOrg = null,
+    string? OrgPhone = null);
 
 /// <summary>시설 수와 편의시설.</summary>
 public sealed record FacilitiesDto(
@@ -389,3 +398,30 @@ public sealed record FacilitiesDto(
 /// <c>LastRefreshedAt</c> = 원본 파일을 마지막으로 받아 반영·확인한 시각 (UTC, 임포트 기록이 없으면 null).
 /// </summary>
 public sealed record SourceInfoDto(string Provider, DateOnly? DataReferenceDate, CoordinateSource CoordinateSource, bool EditedByPeople, DateTime? LastRefreshedAt);
+
+/// <summary>
+/// 관리기관 대표 번호: 전화번호가 빈 화장실에, 같은 자치단체·같은 관리기관의 다른 화장실들이 쓰는 번호 중
+/// 과반이 쓰는 번호. 기관이 화장실마다 다른 번호를 쓰면(과반 없음) 고르지 않는다 — 엉뚱한 곳에 전화하게 하지 않으려고.
+/// 화장실 자체 번호가 아니라서 Phone 에 넣지 않고 OrgPhone 으로 따로 준다 (일일 임포트의 변경 비교에도 섞이지 않게).
+/// </summary>
+public static class OrgPhone
+{
+    public static async Task<string?> FindAsync(MashilDbContext db, int localGovCode, string managementOrg, CancellationToken ct)
+    {
+        var counts = await db.Toilets.AsNoTracking()
+            .Where(t => t.Status != ToiletStatus.Removed && t.LocalGovCode == localGovCode && t.ManagementOrg == managementOrg && t.Phone != null)
+            .GroupBy(t => t.Phone!)
+            .Select(g => new { Phone = g.Key, Count = g.Count() })
+            .ToListAsync(ct);
+        return Pick(counts.Select(c => (c.Phone, c.Count)));
+    }
+
+    /// <summary>과반이 쓰는 번호, 없으면 null.</summary>
+    public static string? Pick(IEnumerable<(string Phone, int Count)> counts)
+    {
+        var list = counts.ToList();
+        var total = list.Sum(c => c.Count);
+        var top = list.OrderByDescending(c => c.Count).ThenBy(c => c.Phone, StringComparer.Ordinal).FirstOrDefault();
+        return total > 0 && top.Count * 2 > total ? top.Phone : null;
+    }
+}
