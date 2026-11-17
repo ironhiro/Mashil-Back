@@ -52,6 +52,7 @@ try
     builder.Services.AddAppStatus(builder.Configuration); // 점검 모드 (/api/app/status)
     builder.Services.AddAdminServices(builder.Configuration); // 관리자 데이터 작업 큐 (임포트·재정규화, ADM-05)
     builder.Services.AddAppVersion(builder.Configuration); // 앱 버전 정책 (/api/app/version)
+    builder.Services.AddAppLinks(builder.Configuration);   // 공유 링크 → 앱 (/.well-known/assetlinks.json 등)
     // 도보 경로 (OpenStreetMap). Routing:Enabled 로 끄고 켠다
     builder.Services.Configure<WalkRoutingOptions>(builder.Configuration.GetSection(WalkRoutingOptions.Section));
     builder.Services.AddScoped<WalkRouter>();
@@ -220,6 +221,7 @@ try
     app.MapToiletEndpoints();
     app.MapAppEndpoints();
     app.MapAppVersionEndpoints();
+    app.MapAppLinkEndpoints();
     app.MapInteractionEndpoints();
     app.MapModerationEndpoints();
     app.MapAdminEndpoints();
