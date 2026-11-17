@@ -262,7 +262,7 @@ public sealed class ImportRunner(MashilDbContext db, ImportPolicy? policy = null
         var added = IssueSync.Replace(toilet, drafts, i => i.FieldName != IssueFields.Geocode, now);
 
         // 오버라이드 적용 + 주소 변경 시 지오코딩 무효화 + 개방시간 오버라이드 재파싱
-        ToiletRecompute.AfterOverrides(toilet, roadBefore, lotBefore, ctx, now, nameBefore);
+        ToiletRecompute.AfterOverrides(toilet, roadBefore, lotBefore, ctx, now, nameBefore, fromImport: true);
 
         toilet.NormalizerVersion = NormalizerVersion;
         toilet.UpdatedAt = now;

@@ -115,30 +115,40 @@ public class GeocodingServiceDbTests
     }
 
     [DbFact]
-    public async Task Address_change_invalidates_geocode_and_retries()
+    public async Task Import_address_change_keeps_coordinates_and_flags_for_review()
+    {
+        // 2026-11-17 결정: 같은 관리번호면 주소 표기가 바뀌어도 다시 지오코딩하지 않는다 (갱신 속도)
+        await using var tdb = await TestDatabase.CreateAsync();
+        await Import(tdb, Files.Of("K1"));
+        await Service(tdb, out var db1, new FakeGeocoder(_ => [At(37.57, 126.98)])).RunBatchAsync();
+        await db1.DisposeAsync();
+
+        await Import(tdb, Files.Raw(Files.Row("K1").Replace("테스트로 1", "새길 9")));
+
+        await using var check = tdb.NewContext();
+        var t = await check.Toilets.Include(x => x.Issues).SingleAsync();
+        Assert.Equal(37.57, t.Latitude);
+        Assert.Equal(CoordinateSource.KakaoGeocoded, t.CoordinateSource);
+        var issue = Assert.Single(t.Issues, i => i.Type == IssueType.AddressChanged && i.Status == IssueStatus.Open);
+        Assert.Contains("새길 9", issue.RawValue);
+        Assert.Empty(await Service(tdb, out var db2, new FakeGeocoder(_ => [])).Pending().ToListAsync());
+        await db2.DisposeAsync();
+    }
+
+    [DbFact]
+    public async Task Import_address_change_retries_when_there_was_no_coordinate()
     {
         await using var tdb = await TestDatabase.CreateAsync();
         await Import(tdb, Files.Of("K1"));
-        var r1 = await Service(tdb, out var db1, new FakeGeocoder(_ => [At(37.57, 126.98)])).RunBatchAsync();
+        await Service(tdb, out var db1, new FakeGeocoder(_ => [])).RunBatchAsync(); // 못 찾음
         await db1.DisposeAsync();
 
-        var moved = Files.Row("K1").Replace("테스트로 1", "새길 9");
-        await Import(tdb, Files.Raw(moved));
-
-        await using (var mid = tdb.NewContext())
-        {
-            var t = await mid.Toilets.SingleAsync();
-            Assert.Null(t.Location);
-            Assert.Equal(CoordinateSource.Unknown, t.CoordinateSource);
-        }
+        await Import(tdb, Files.Raw(Files.Row("K1").Replace("테스트로 1", "새길 9")));
 
         var fake = new FakeGeocoder(_ => [At(37.60, 127.00, road: "새길", no: "9")]);
-        var r2 = await Service(tdb, out var db2, fake).RunBatchAsync();
+        var r = await Service(tdb, out var db2, fake).RunBatchAsync();
         await db2.DisposeAsync();
-        Assert.Equal(1, r2.Matched);
-
-        await using var check = tdb.NewContext();
-        Assert.Equal(37.60, await check.Toilets.Select(t => t.Latitude).SingleAsync());
+        Assert.Equal(1, r.Matched);
     }
 
     [DbFact]
@@ -265,5 +275,35 @@ public class GeocodingServiceDbTests
         await using var check = tdb.NewContext();
         var t = await check.Toilets.SingleAsync(x => x.ManagementNo == "K1");
         Assert.Equal(CoordinateSource.Unknown, t.CoordinateSource); // 다음 배치에서 새 이름으로 다시
+    }
+
+    [DbFact]
+    public async Task Reported_address_is_not_seen_as_changed_by_daily_import()
+    {
+        // 제보로 고친 주소는 원본과 다르다. 원본 파일이 다시 와도(심지어 원본 주소가 또 바뀌어도) 최종 주소는 그대로라 아무 일도 없어야 한다
+        await using var tdb = await TestDatabase.CreateAsync();
+        await Import(tdb, Files.Of("K1"));
+        await Service(tdb, out var db1, new FakeGeocoder(_ => [At(37.57, 126.98)])).RunBatchAsync();
+        await db1.DisposeAsync();
+        await using (var db = tdb.NewContext())
+        {
+            var t = await db.Toilets.SingleAsync();
+            db.ToiletOverrides.Add(new ToiletOverride
+            {
+                ToiletId = t.Id, FieldName = OverrideFields.RoadAddress, ValueJson = "\"서울특별시 종로구 제보로 5\"",
+                Source = OverrideSource.ChangeRequest, Priority = (int)OverrideSource.ChangeRequest, IsActive = true, CreatedAt = DateTime.UtcNow,
+            });
+            t.RoadAddress = "서울특별시 종로구 제보로 5";
+            await db.SaveChangesAsync();
+        }
+
+        await Import(tdb, Files.Of("K1"));
+        await Import(tdb, Files.Raw(Files.Row("K1").Replace("테스트로 1", "원본길 7")));
+
+        await using var check = tdb.NewContext();
+        var after = await check.Toilets.Include(x => x.Issues).SingleAsync();
+        Assert.Equal("서울특별시 종로구 제보로 5", after.RoadAddress);
+        Assert.Equal(37.57, after.Latitude);
+        Assert.DoesNotContain(after.Issues, i => i.Type == IssueType.AddressChanged);
     }
 }

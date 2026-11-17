@@ -50,6 +50,8 @@ public enum IssueType
     Ambiguous = 10,
     /// <summary>주소로 못 찾아 화장실 이름으로 찾은 좌표 (Info, 관리자 확인 권장).</summary>
     PlaceNameMatch = 11,
+    /// <summary>일일 임포트에서 주소가 바뀌었지만 좌표를 유지함 (Info, 실제 이전이면 관리자가 좌표 수정).</summary>
+    AddressChanged = 12,
 }
 
 public enum IssueSeverity { Info = 0, Warning = 1, Error = 2 }
