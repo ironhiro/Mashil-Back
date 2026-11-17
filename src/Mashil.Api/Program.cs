@@ -203,6 +203,14 @@ try
             await db.Database.CanConnectAsync(ct) ? Results.Ok(new { status = "ready" }) : Results.StatusCode(StatusCodes.Status503ServiceUnavailable))
         .WithTags("Health").ExcludeFromDescription();
 
+    // 지금 떠 있는 것: 배포 이름(CI 가 넣는 MASHIL_RELEASE)과 서버 커밋(이미지 빌드 때 MASHIL_GIT_SHA). 웹 커밋은 /version.json
+    app.MapGet("/healthz/version", () => Results.Ok(new
+        {
+            release = Environment.GetEnvironmentVariable("MASHIL_RELEASE") ?? "local",
+            server = Environment.GetEnvironmentVariable("MASHIL_GIT_SHA") ?? "dev",
+        }))
+        .WithTags("Health").ExcludeFromDescription();
+
     app.MapGet("/healthz", () => Results.Ok(new { status = "ok" }))
         .WithTags("Health")
         .WithSummary("간단 헬스체크")

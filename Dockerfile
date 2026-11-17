@@ -39,6 +39,7 @@ COPY --from=build /out/api .
 COPY web-dist/ ./wwwroot/
 ENV ASPNETCORE_HTTP_PORTS=8080 \
     DOTNET_gcServer=0 \
+    MASHIL_GIT_SHA=$GIT_SHA \
     SENTRY_RELEASE=mashil-api@$GIT_SHA
 EXPOSE 8080
 USER app
@@ -52,6 +53,7 @@ LABEL org.opencontainers.image.revision=$GIT_SHA
 WORKDIR /app
 COPY --from=build /out/worker .
 ENV DOTNET_ENVIRONMENT=Production \
+    MASHIL_GIT_SHA=$GIT_SHA \
     SENTRY_RELEASE=mashil-worker@$GIT_SHA
 USER app
 ENTRYPOINT ["dotnet", "Mashil.Worker.dll"]
