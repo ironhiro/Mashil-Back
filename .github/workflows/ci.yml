@@ -129,7 +129,7 @@ jobs:
         env:
           VITE_KAKAO_MAP_KEY: ${{ vars.VITE_KAKAO_MAP_KEY }}
           VITE_SENTRY_DSN: ${{ vars.VITE_SENTRY_DSN }}
-          VITE_SENTRY_ENVIRONMENT: production
+          # Sentry environment 는 웹이 접속 호스트로 정한다 (Mashil-Front src/lib/sentryEnv.ts): 같은 이미지가 dev → 운영으로 승격되므로
           VITE_RELEASE: ${{ github.sha }}
         run: |
           npm ci
