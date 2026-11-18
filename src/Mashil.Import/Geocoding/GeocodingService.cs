@@ -16,6 +16,8 @@ public sealed record GeocodingOptions
     public int RequestDelayMs { get; init; } = 200;
 }
 
+public sealed record CoordinateCheckResult(int Candidates, int Checked, int Fixed, int ApiCalls, bool Stopped, string? Error = null);
+
 public sealed record GeocodeBatchResult(int Processed, int Matched, int NoMatch, int ApiCalls, int CacheHits, bool BudgetExhausted, bool GeocoderUnavailable, string? Error = null);
 
 /// <summary>
@@ -193,6 +195,105 @@ public sealed class GeocodingService(
             Latitude = pick.Latitude, Longitude = pick.Longitude,
             MatchedAddress = pick.AddressName, MatchedSido = pick.Sido, CandidateCount = distinct.Count,
         };
+    }
+
+    /// <summary>원본 좌표와 주소 좌표가 이만큼 넘게 떨어지면 원본 좌표가 틀린 것으로 본다.</summary>
+    public const double CoordinateMismatchMeters = 500;
+
+    /// <summary>
+    /// 원본 좌표 검증 대상: 원본(Csv) 좌표인데, 좌표에서 가장 가까운 화장실 10곳 중 주소의 시군구가 같은 곳이 하나도 없음.
+    /// 예: 주소는 서대문구 홍제역인데 원본 좌표가 종로구 경복궁역 (2026-11-18 전국 검사에서 약 300곳).
+    /// 같은 자리(5m 안)에 겹친 행은 같은 원본 오류일 수 있어 이웃에서 뺀다.
+    /// </summary>
+    public Task<List<long>> ImportedCoordinateSuspectsAsync(CancellationToken ct = default) =>
+        db.Database.SqlQueryRaw<long>("""
+            SELECT t."Id" AS "Value" FROM toilets t
+            WHERE t."CoordinateSource" = 'Csv' AND t."Status" <> 'Removed' AND t."Location" IS NOT NULL
+              AND split_part(coalesce(t."RoadAddress", t."LotAddress"), ' ', 2) ~ '(시|군|구)$'
+              AND NOT EXISTS (
+                SELECT 1 FROM (SELECT n."RoadAddress" ra, n."LotAddress" la FROM toilets n
+                               WHERE n."Id" <> t."Id" AND n."Location" IS NOT NULL AND n."Status" <> 'Removed'
+                                 AND NOT ST_DWithin(n."Location"::geography, t."Location"::geography, 5)
+                               ORDER BY n."Location" <-> t."Location" LIMIT 10) k
+                WHERE split_part(coalesce(k.ra, k.la), ' ', 2) = split_part(coalesce(t."RoadAddress", t."LotAddress"), ' ', 2))
+            ORDER BY t."Id"
+            """).ToListAsync(ct);
+
+    /// <summary>
+    /// 원본 좌표가 주소와 맞는지 확인한다. 의심 대상(<see cref="ImportedCoordinateSuspectsAsync"/>)만 주소로 찾아서,
+    /// 주소 좌표가 <see cref="CoordinateMismatchMeters"/> 넘게 떨어져 있으면 지오코딩 오버라이드(원본보다 우선)로 바꾸고 이슈를 남긴다.
+    /// 주소 검증(도로명·본번 일치)을 통과한 Kakao 결과만 쓴다 — 이름 검색·브이월드로 찾은 좌표로는 바꾸지 않는다.
+    /// 캐시를 쓰므로 매일 다시 돌려도 새 주소만 API 를 부른다. 관리자 좌표는 그대로 이긴다 (우선순위).
+    /// </summary>
+    public async Task<CoordinateCheckResult> CheckImportedCoordinatesAsync(CancellationToken ct = default)
+    {
+        var ids = await ImportedCoordinateSuspectsAsync(ct);
+        var usage = await TodayUsageAsync(ct);
+        var now = _clock.GetUtcNow().UtcDateTime;
+        int checkedCount = 0, fixedCount = 0, calls = 0;
+        bool stopped = false;
+        string? error = null;
+
+        foreach (var chunk in ids.Chunk(_opts.BatchSize))
+        {
+            var toilets = await db.Toilets.Where(t => chunk.Contains(t.Id))
+                .Include(t => t.Overrides.Where(o => o.IsActive))
+                .ToListAsync(ct);
+            foreach (var t in toilets)
+            {
+                var expectedSido = SidoNames.Canonical(t.RoadAddress ?? t.LotAddress);
+                GeocodeCacheEntry? hit = null;
+                foreach (var q in GeocodeQueryBuilder.Build(t.RoadAddress, t.LotAddress))
+                {
+                    if (q.IsRegionOnly) continue;
+                    var cached = await db.GeocodeCache.FindAsync([q.Query], ct);
+                    if (cached is null)
+                    {
+                        if (usage.Calls >= _opts.DailyBudget) { stopped = true; error = "일일 예산 소진"; break; }
+                        IReadOnlyList<GeocodeCandidate> candidates;
+                        try { usage.Calls++; calls++; candidates = await geocoder.SearchAsync(q.Query, ct); }
+                        catch (Exception ex) when (ex is GeocoderUnavailableException or HttpRequestException) { stopped = true; error = ex.Message; break; }
+                        finally { await _delay(TimeSpan.FromMilliseconds(_opts.RequestDelayMs), ct); }
+                        cached = Choose(q, candidates, expectedSido);
+                        db.GeocodeCache.Add(cached);
+                    }
+                    if (cached.Status == GeocodeCacheStatus.Matched) { hit = cached; break; }
+                }
+                if (stopped) break;
+                checkedCount++;
+                if (hit is null || t.Latitude is not { } lat || t.Longitude is not { } lng) continue;
+
+                var meters = DistanceMeters(lat, lng, hit.Latitude!.Value, hit.Longitude!.Value);
+                if (meters <= CoordinateMismatchMeters) continue;
+
+                SetGeocodeLocation(t, hit.Latitude.Value, hit.Longitude.Value, now);
+                t.Issues.Add(new NormalizationIssue
+                {
+                    FieldName = IssueFields.Geocode, Type = IssueType.CoordinateMismatch, Severity = IssueSeverity.Info,
+                    RawValue = $"{lat:F6},{lng:F6}",
+                    Note = $"원본 좌표가 주소({hit.MatchedAddress})와 {meters / 1000:N1}km 떨어져 주소 좌표로 바꿈 — 확인 권장",
+                    CreatedAt = now,
+                });
+                t.UpdatedAt = now;
+                fixedCount++;
+            }
+            await db.SaveChangesAsync(ct);
+            db.ChangeTracker.Clear();
+            if (stopped) break;
+            usage = await TodayUsageAsync(ct); // Clear 로 추적이 끊겼으니 다시 붙인다
+        }
+        await db.SaveChangesAsync(ct);
+        return new CoordinateCheckResult(ids.Count, checkedCount, fixedCount, calls, stopped, error);
+    }
+
+    internal static double DistanceMeters(double lat1, double lng1, double lat2, double lng2)
+    {
+        const double R = 6_371_000;
+        var dLat = (lat2 - lat1) * Math.PI / 180;
+        var dLng = (lng2 - lng1) * Math.PI / 180;
+        var a = Math.Sin(dLat / 2) * Math.Sin(dLat / 2)
+              + Math.Cos(lat1 * Math.PI / 180) * Math.Cos(lat2 * Math.PI / 180) * Math.Sin(dLng / 2) * Math.Sin(dLng / 2);
+        return 2 * R * Math.Asin(Math.Sqrt(a));
     }
 
     private static void SetGeocodeLocation(Toilet t, double lat, double lng, DateTime now)

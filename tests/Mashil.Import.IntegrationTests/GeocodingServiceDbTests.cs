@@ -339,4 +339,59 @@ public class GeocodingServiceDbTests
         Assert.Equal(37.57, after.Latitude);
         Assert.DoesNotContain(after.Issues, i => i.Type == IssueType.AddressChanged);
     }
+
+    private static async Task SetSourceCoordinate(TestDatabase tdb, string key, double lat, double lng)
+    {
+        await using var db = tdb.NewContext();
+        var t = await db.Toilets.Include(x => x.Overrides).SingleAsync(x => x.ManagementNo == key);
+        t.Overrides.Add(new ToiletOverride
+        {
+            FieldName = OverrideFields.Location, ValueJson = OverrideApplier.LocationJson(lat, lng),
+            Source = OverrideSource.ImportedCoordinate, Priority = (int)OverrideSource.ImportedCoordinate,
+        });
+        OverrideApplier.Apply(t, t.Overrides);
+        await db.SaveChangesAsync();
+    }
+
+    [DbFact]
+    public async Task Source_coordinate_far_from_its_address_is_replaced_by_the_address_coordinate()
+    {
+        // 2026-11-18: "3호선 홍제역"(서대문구 통일로)의 원본 좌표가 종로구 경복궁역에 있었다
+        await using var tdb = await TestDatabase.CreateAsync();
+        await Import(tdb, Files.Raw(
+            Files.Row("WRONG").Replace("종로구 테스트로 1", "서대문구 통일로 440"),
+            Files.Row("NEAR").Replace("종로구 테스트로 1", "성북구 통일로 500"),
+            Files.Row("J1").Replace("테스트로 1", "사직로 1"),
+            Files.Row("J2").Replace("테스트로 1", "사직로 2"),
+            Files.Row("J3").Replace("테스트로 1", "평창길 3")));
+        await SetSourceCoordinate(tdb, "WRONG", 37.5758, 126.9731);
+        await SetSourceCoordinate(tdb, "NEAR", 37.6100, 126.9600); // 둘이 서로 이웃이면 의심이 아니므로 떨어뜨려 둔다
+        await SetSourceCoordinate(tdb, "J1", 37.5760, 126.9735);
+        await SetSourceCoordinate(tdb, "J2", 37.5765, 126.9729);
+        await SetSourceCoordinate(tdb, "J3", 37.6105, 126.9605);
+
+        var fake = new FakeGeocoder(q => q.Contains("440") ? [At(37.5890, 126.9440, "통일로", "440")]
+            : q.Contains("500") ? [At(37.6102, 126.9602, "통일로", "500")] // 원본과 수십 m: 그대로 둔다
+            : []);
+        var svc = Service(tdb, out var db, fake);
+        var suspects = await svc.ImportedCoordinateSuspectsAsync();
+        var r = await svc.CheckImportedCoordinatesAsync();
+        await db.DisposeAsync();
+
+        Assert.Equal(2, suspects.Count); // 서대문구·성북구 주소 (주변에 같은 구가 없음). 종로구 주소는 대상 아님
+        Assert.Equal((2, 2, 1), (r.Candidates, r.Checked, r.Fixed));
+
+        await using var check = tdb.NewContext();
+        var wrong = await check.Toilets.Include(t => t.Issues).SingleAsync(t => t.ManagementNo == "WRONG");
+        Assert.Equal((37.5890, 126.9440), (wrong.Latitude, wrong.Longitude));
+        Assert.Equal(CoordinateSource.KakaoGeocoded, wrong.CoordinateSource);
+        Assert.Single(wrong.Issues, i => i.Type == IssueType.CoordinateMismatch);
+        var near = await check.Toilets.SingleAsync(t => t.ManagementNo == "NEAR");
+        Assert.Equal((37.6100, CoordinateSource.Csv), (near.Latitude, near.CoordinateSource));
+
+        // 다시 돌려도 바뀐 곳은 대상에서 빠지고, 남은 곳은 캐시만 쓴다
+        var again = await Service(tdb, out var db2, fake).CheckImportedCoordinatesAsync();
+        await db2.DisposeAsync();
+        Assert.Equal((1, 0, 0), (again.Candidates, again.Fixed, again.ApiCalls));
+    }
 }

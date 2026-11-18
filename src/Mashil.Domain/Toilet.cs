@@ -40,6 +40,12 @@ public sealed class Toilet
     /// <summary>서비스 노출 상태. Removed 는 지도·검색에서 제외 (soft delete).</summary>
     public ToiletStatus Status { get; set; } = ToiletStatus.Active;
 
+    /// <summary>
+    /// 원본에 같은 화장실이 관리번호만 달리 여러 번 있을 때, 남긴 행의 Id (<c>DuplicateMarker</c>).
+    /// 값이 있으면 지도·목록·검색에서 빠진다. 상세·평점·댓글은 예전 링크를 위해 그대로 열린다.
+    /// </summary>
+    public long? DuplicateOfId { get; set; }
+
     /// <summary>원본보다 우선하는 필드 값 (관리자 수정, 승인된 변경 요청, 지오코딩).</summary>
     public List<ToiletOverride> Overrides { get; set; } = [];
 

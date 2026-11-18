@@ -109,6 +109,7 @@ public sealed class ImportRunner(MashilDbContext db, ImportPolicy? policy = null
             _ctx = await LoadContextAsync(ct);
             await ProcessAsync(source, adapter, file, run, progress, ct);
             await MissingRecordProcessor.ProcessAsync(db, source.Id, run, _policy, ct);
+            await DuplicateMarker.MarkAsync(db, ct); // 원본의 중복 행 숨김 (매번 다시 계산)
             if (run.Status == ImportRunStatus.Running) run.Status = ImportRunStatus.Succeeded;
         }
         catch (SourceSchemaException ex)

@@ -18,7 +18,11 @@ public static class ToiletEndpoints
     /// 공개 API 에 보이는 화장실. 삭제 요청이 승인(Removed)된 곳은 목록·상세에 없고 평점·댓글도 받지 않는다 (CR-03, #18).
     /// 관리자는 <c>/api/admin/toilets/{id}</c> 로 계속 볼 수 있다.
     /// </summary>
-    public static readonly Expression<Func<Toilet, bool>> IsVisible = t => t.Status != ToiletStatus.Removed;
+    /// <summary>지도·목록·검색에 보이는 화장실: 삭제되지 않았고, 원본 중복으로 숨긴 행도 아님.</summary>
+    public static readonly Expression<Func<Toilet, bool>> IsVisible = t => t.Status != ToiletStatus.Removed && t.DuplicateOfId == null;
+
+    /// <summary>상세·평점·댓글이 열리는 화장실: 삭제만 아니면 (중복으로 숨긴 행도 예전 공유 링크로 열린다).</summary>
+    public static readonly Expression<Func<Toilet, bool>> IsOpenable = t => t.Status != ToiletStatus.Removed;
 
     /// <summary>출처 표시 (MAP-07): 공공데이터 원본이면 LOCALDATA, 제보로 추가된 곳이면 USER_SUBMITTED.</summary>
     public static string SourceProvider(ToiletOrigin origin) => origin == ToiletOrigin.UserSubmitted ? "USER_SUBMITTED" : "LOCALDATA";
@@ -155,7 +159,7 @@ public static class ToiletEndpoints
         {
             var take = Math.Clamp(limit ?? 200, 1, 500);
             var results = await db.Toilets
-                .Where(t => t.Status != ToiletStatus.Removed
+                .Where(t => t.Status != ToiletStatus.Removed && t.DuplicateOfId == null
                          && t.Location != null
                          && t.Latitude >= south && t.Latitude <= north
                          && t.Longitude >= west && t.Longitude <= east)
@@ -179,7 +183,7 @@ public static class ToiletEndpoints
         {
             var x = await db.Toilets
                 .Where(t => t.Id == id)
-                .Where(IsVisible)
+                .Where(IsOpenable)
                 .Select(t => new
                 {
                     t.Id, t.ManagementNo, t.Name, t.Kind, t.KindCode, t.Status, t.Origin,
@@ -252,7 +256,7 @@ public static class ToiletEndpoints
             }
             var like = ContainsPattern(q);
             var matches = db.Toilets
-                .Where(t => t.Status != ToiletStatus.Removed
+                .Where(t => t.Status != ToiletStatus.Removed && t.DuplicateOfId == null
                          && (EF.Functions.ILike(t.Name, like, LikeEscape)
                              || (t.RoadAddress != null && EF.Functions.ILike(t.RoadAddress, like, LikeEscape))
                              || (t.LotAddress != null && EF.Functions.ILike(t.LotAddress, like, LikeEscape))));
@@ -304,7 +308,7 @@ public static class ToiletEndpoints
         var origin = new Point(lng, lat) { SRID = 4326 };
 
         var rows = await db.Toilets
-            .Where(t => t.Status != ToiletStatus.Removed
+            .Where(t => t.Status != ToiletStatus.Removed && t.DuplicateOfId == null
                      && t.Location != null && t.Location.IsWithinDistance(origin, radiusM))
             .OrderBy(t => t.Location!.Distance(origin))
             .Take(take)

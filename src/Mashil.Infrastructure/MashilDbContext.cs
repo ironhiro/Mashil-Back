@@ -57,6 +57,7 @@ public sealed class MashilDbContext(DbContextOptions<MashilDbContext> options) :
             e.Property(t => t.Origin).HasConversion<string>().HasDefaultValue(ToiletOrigin.PublicData).HasSentinel((ToiletOrigin)(-1));
             e.Property(t => t.Status).HasConversion<string>().HasDefaultValue(ToiletStatus.Active).HasSentinel((ToiletStatus)(-1));
             e.HasIndex(t => t.Status);
+            e.HasIndex(t => t.DuplicateOfId);
             e.Property(t => t.KindCode).HasConversion<string>().HasMaxLength(16).HasDefaultValue(ToiletKind.Other).HasSentinel((ToiletKind)(-1));
             e.Property(t => t.ScheduleStatus).HasConversion<string>().HasMaxLength(16).HasDefaultValue(ScheduleStatus.Unknown).HasSentinel((ScheduleStatus)(-1));
             e.Property(t => t.NormalizerVersion).HasMaxLength(16);
