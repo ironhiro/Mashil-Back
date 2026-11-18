@@ -1,4 +1,4 @@
-using System.Net;
+﻿using System.Net;
 using Mashil.Api.Ops;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
@@ -17,6 +17,8 @@ public class RateLimitingTests
     [InlineData("OPTIONS", "/api/toilets/1/comments", RateLimitTier.Read)]
     [InlineData("POST", "/api/toilets/1/comments", RateLimitTier.Write)]
     [InlineData("PATCH", "/api/admin/comments/3", RateLimitTier.Write)]
+    [InlineData("PUT", "/api/comments/3", RateLimitTier.Write)] // 내 댓글 고치기
+    [InlineData("DELETE", "/api/comments/3", RateLimitTier.Write)] // 내 댓글 지우기
     [InlineData("GET", "/api/auth/me", RateLimitTier.Auth)]
     [InlineData("POST", "/api/auth/oauth/kakao", RateLimitTier.Auth)]
     [InlineData("POST", "/api/auth/me/withdraw", RateLimitTier.Auth)]
