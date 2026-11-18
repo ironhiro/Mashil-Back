@@ -88,3 +88,15 @@ sentry.io 에서 프로젝트 두 개 (예: `mashil-api` .NET, `mashil-web` Reac
 ## 5. App Links
 
 docs/APP-LINKS.md.
+
+## 6. 예전 비밀번호 계정 정리 (출시 직전 한 번)
+
+운영은 OAuth(카카오·Google)만 쓴다. 이메일·비밀번호 가입은 개발에서만 켜지고(`Auth:LegacyPasswordLogin`), 비밀번호는 PBKDF2 해시로만 저장한다.
+운영 DB 에 비밀번호 해시가 남지 않도록 출시 직전에 정리한다. 탈퇴와 같은 방식이라 댓글·평점은 "탈퇴한 사용자"로 남는다.
+
+```bash
+# 백업 먼저. 미리보기 수를 보고, 끝에 남은 해시가 0 인지 확인
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f deploy/sql/purge-legacy-password-accounts.sql
+```
+
+운영 설정에 `Auth__LegacyPasswordLogin` 이 없거나 `false` 인지도 확인한다 (켜져 있으면 `/api/auth/register` 가 열린다).

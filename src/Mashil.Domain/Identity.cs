@@ -56,7 +56,10 @@ public enum ConsentDocType
 {
     Terms = 0,
     Privacy = 1,
+    /// <summary>위치 정보 이용 안내. 위치를 기기에서만 쓰게 되면서(2026-11-18) 필수 동의에서 빠졌다. 예전 동의 기록용으로 남긴다.</summary>
     LocationTerms = 2,
+    /// <summary>만 14세 이상 확인 (약관 제4조: 만 14세 미만은 가입할 수 없다).</summary>
+    AgeOver14 = 3,
 }
 
 /// <summary>약관 동의 이력 (버전별). 탈퇴 후에도 동의 증빙으로 보관 — 개인정보는 user_id 뿐 (LEG-03).</summary>

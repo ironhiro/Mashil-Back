@@ -91,7 +91,7 @@ public static class InteractionEndpoints
             return Results.Ok(rows
                 .OrderByDescending(r => r.c.CreatedAt)
                 .Select(r => new CommentView(r.c.Id, r.c.ToiletId, r.c.UserId,
-                    CommentAuthor.Name(r.DisplayName, r.Status), r.Status == UserStatus.Deleted,
+                    CommentAuthor.Name(r.DisplayName, r.Status, r.c.UserId), r.Status == UserStatus.Deleted,
                     r.c.Text, r.c.Hidden, r.c.CreatedAt, r.c.UpdatedAt, viewer == r.c.UserId,
                     tallies.TryGetValue(r.c.Id, out var tl) ? tl.Up : 0,
                     tallies.TryGetValue(r.c.Id, out var td) ? td.Down : 0,
@@ -123,7 +123,7 @@ public static class InteractionEndpoints
                 .Select(u => new { u.DisplayName, u.Status }).FirstOrDefaultAsync(ct);
             return Results.Created($"/api/toilets/{toiletId}/comments/{c.Id}", new CommentView(
                 c.Id, c.ToiletId, c.UserId,
-                CommentAuthor.Name(author?.DisplayName, author?.Status ?? UserStatus.Active), false,
+                CommentAuthor.Name(author?.DisplayName, author?.Status ?? UserStatus.Active, c.UserId), false,
                 c.Text, c.Hidden, c.CreatedAt, c.UpdatedAt, true, 0, 0, 0));
         })
         .RequireAuthorization()
