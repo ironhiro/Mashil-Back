@@ -305,6 +305,24 @@ public class AppleAndCryptoTests
     }
 
     [Fact]
+    public async Task Google_token_without_nonce_is_accepted_even_if_request_sent_one_unless_required()
+    {
+        var idp = new FakeIdp();
+        GoogleIdentityProvider Google(bool required) => new(new GoogleAuthOptions { ClientIds = ["web.apps"], RequireNonce = required },
+            new OidcTokenValidator(idp, GoogleIdentityProvider.Issuers));
+        var noNonce = idp.Token("https://accounts.google.com", "web.apps", "g-1");
+        var withNonce = idp.Token("https://accounts.google.com", "web.apps", "g-1", new Dictionary<string, object> { ["nonce"] = "abc" });
+
+        // 앱 로그인: 웹이 nonce 를 보내도 토큰에는 없다
+        Assert.Equal("g-1", (await Google(false).VerifyAsync(new SocialCredential(IdToken: noNonce), "abc", default)).Subject);
+        // 토큰에 nonce 가 있으면 일치해야 한다
+        Assert.Equal("g-1", (await Google(false).VerifyAsync(new SocialCredential(IdToken: withNonce), "abc", default)).Subject);
+        await Assert.ThrowsAsync<AuthFailure>(() => Google(false).VerifyAsync(new SocialCredential(IdToken: withNonce), "other", default));
+        // 필수로 켜면 nonce 없는 토큰은 거절
+        await Assert.ThrowsAsync<AuthFailure>(() => Google(true).VerifyAsync(new SocialCredential(IdToken: noNonce), "abc", default));
+    }
+
+    [Fact]
     public async Task Apple_client_secret_is_es256_jwt_for_team_and_client()
     {
         using var ec = ECDsa.Create(ECCurve.NamedCurves.nistP256);
@@ -385,7 +403,7 @@ public class AppleAndCryptoTests
     public void Defaults_apply_only_when_no_documents_are_configured()
     {
         var docs = CurrentConsents(new() { ["Consents:EnforceOnWrite"] = "false" });
-        Assert.Equal([(ConsentDocType.Terms, "1"), (ConsentDocType.Privacy, "1"), (ConsentDocType.LocationTerms, "1")], docs);
+        Assert.Equal([(ConsentDocType.Terms, "1"), (ConsentDocType.Privacy, "1"), (ConsentDocType.AgeOver14, "1")], docs);
         Assert.Equal(3, new ConsentOptions().Current.Count);
     }
 

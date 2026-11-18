@@ -98,7 +98,7 @@ public sealed class ConsentOptions
     [
         new() { Type = Domain.ConsentDocType.Terms, Version = "1" },
         new() { Type = Domain.ConsentDocType.Privacy, Version = "1" },
-        new() { Type = Domain.ConsentDocType.LocationTerms, Version = "1" },
+        new() { Type = Domain.ConsentDocType.AgeOver14, Version = "1" },
     ];
 
     /// <summary>현재 동의 대상 문서. 설정이 비었으면 기본 문서.</summary>

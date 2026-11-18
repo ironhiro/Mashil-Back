@@ -199,8 +199,8 @@ public class AuthDbTests
         var consents = h.Consents(db);
         Assert.False(await consents.AgreeAsync(login.User.Id, [(ConsentDocType.Terms, "0.9")], default));
         Assert.True(await consents.AgreeAsync(login.User.Id, [(ConsentDocType.Terms, "1"), (ConsentDocType.Privacy, "1")], default));
-        Assert.True(await consents.IsRequiredAsync(login.User.Id, default)); // 위치기반 약관 남음
-        Assert.True(await consents.AgreeAsync(login.User.Id, [(ConsentDocType.LocationTerms, "1"), (ConsentDocType.Terms, "1")], default)); // 중복 무시
+        Assert.True(await consents.IsRequiredAsync(login.User.Id, default)); // 만 14세 확인 남음
+        Assert.True(await consents.AgreeAsync(login.User.Id, [(ConsentDocType.AgeOver14, "1"), (ConsentDocType.Terms, "1")], default)); // 중복 무시
         Assert.False(await consents.IsRequiredAsync(login.User.Id, default));
         Assert.False((await h.SignIn(AuthProvider.Kakao, "1")).ConsentRequired);
     }

@@ -64,7 +64,7 @@ public static class ModerationEndpoints
                     .Join(db.UserProfiles, b => b.BlockedId, u => u.Id, (b, u) => new { b.BlockedId, u.DisplayName, u.Status, b.CreatedAt })
                     .OrderByDescending(x => x.CreatedAt)
                     .ToListAsync(ct);
-                return Results.Ok(list.Select(x => new BlockedUser(x.BlockedId, CommentAuthor.Name(x.DisplayName, x.Status), x.CreatedAt)));
+                return Results.Ok(list.Select(x => new BlockedUser(x.BlockedId, CommentAuthor.Name(x.DisplayName, x.Status, x.BlockedId), x.CreatedAt)));
             })
             .WithSummary("내 차단 목록")
             .Produces<IReadOnlyList<BlockedUser>>();
@@ -98,10 +98,18 @@ public static class ModerationEndpoints
     public sealed record BlockedUser(Guid UserId, string DisplayName, DateTime BlockedAt);
 }
 
+/// <summary>
+/// 댓글 등에 보이는 작성자 이름. 닉네임은 중복을 허용하고, 사람마다 4자리 구분 번호를 붙여 <c>이름#1234</c> 로 보인다 (2026-11-18 결정).
+/// 번호는 회원 ID 에서 정해진다 (이름을 바꿔도 그대로). 웹 <c>src/lib/userTag.ts</c> 와 같은 식이어야 한다.
+/// </summary>
 public static class CommentAuthor
 {
     public const string Anonymous = "익명";
 
-    public static string Name(string? displayName, UserStatus status) =>
-        status == UserStatus.Deleted ? UserProfile.DeletedDisplayName : displayName ?? Anonymous;
+    /// <summary>회원 ID(소문자 16진수 32자) 앞 8자리를 정수로 읽어 10000 으로 나눈 나머지, 네 자리.</summary>
+    public static string Tag(Guid userId) =>
+        (Convert.ToUInt32(userId.ToString("N")[..8], 16) % 10000).ToString("D4", System.Globalization.CultureInfo.InvariantCulture);
+
+    public static string Name(string? displayName, UserStatus status, Guid userId) =>
+        status == UserStatus.Deleted ? UserProfile.DeletedDisplayName : $"{displayName ?? Anonymous}#{Tag(userId)}";
 }

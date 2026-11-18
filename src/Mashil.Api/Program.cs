@@ -63,6 +63,10 @@ try
 
     // --- 인증: 마실 JWT (HS256) + OAuth 검증 서비스 (P4) ---
     builder.Services.AddSingleton(TimeProvider.System);
+    // 전국 화장실 목록과 평점 집계 (기기에서 근처 찾기: 위치를 서버로 보내지 않는다)
+    builder.Services.AddSingleton<ToiletSnapshotProvider>();
+    builder.Services.AddSingleton<ToiletStatsProvider>();
+    builder.Services.AddHostedService<ToiletSnapshotWarmup>();
     builder.Services.AddMashilIdentity(builder.Configuration);
     var jwt = builder.Configuration.GetSection("Jwt").Get<JwtOptions>()
         ?? throw new InvalidOperationException("Jwt section missing");
