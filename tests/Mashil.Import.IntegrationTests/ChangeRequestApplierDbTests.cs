@@ -100,6 +100,29 @@ public class ChangeRequestApplierDbTests
     }
 
     [DbFact]
+    public async Task Guest_request_without_requester_is_saved_and_applied()
+    {
+        // 비회원 제보 (2026-11-18): 요청자가 없어도 저장되고 승인하면 반영된다
+        await using var tdb = await TestDatabase.CreateAsync();
+        Guid admin;
+        ChangeRequest cr;
+        await using (var db = tdb.NewContext())
+        {
+            var reviewer = new UserProfile { Email = $"{Guid.NewGuid():N}@example.invalid", Role = UserRole.Admin };
+            db.UserProfiles.Add(reviewer);
+            cr = new ChangeRequest { RequesterId = null, Kind = ChangeRequestKind.Add, PayloadJson = """{"name":"비회원 제보 화장실","roadAddress":"서울특별시 종로구 테스트로 1"}""" };
+            db.ChangeRequests.Add(cr);
+            await db.SaveChangesAsync();
+            admin = reviewer.Id;
+        }
+        var r = await Apply(tdb, cr, admin);
+
+        await using var check = tdb.NewContext();
+        Assert.Null((await check.ChangeRequests.SingleAsync(x => x.Id == cr.Id)).RequesterId);
+        Assert.Equal("비회원 제보 화장실", (await check.Toilets.SingleAsync(x => x.Id == r.ToiletId)).Name);
+    }
+
+    [DbFact]
     public async Task Add_creates_user_submitted_toilet_with_schedule()
     {
         await using var tdb = await TestDatabase.CreateAsync();

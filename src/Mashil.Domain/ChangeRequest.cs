@@ -6,7 +6,10 @@ namespace Mashil.Domain;
 public sealed class ChangeRequest
 {
     public long Id { get; set; }
-    public required Guid RequesterId { get; set; }
+    /// <summary>
+    /// 요청한 회원. 비회원 제보면 null (2026-11-18: 제보는 로그인 없이도 받는다). 비회원은 결과를 내 정보에서 볼 수 없다.
+    /// </summary>
+    public Guid? RequesterId { get; set; }
 
     /// <summary>대상 toilet (Add 요청일 때는 null).</summary>
     public long? TargetToiletId { get; set; }
