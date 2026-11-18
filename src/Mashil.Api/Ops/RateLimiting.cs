@@ -13,6 +13,7 @@ namespace Mashil.Api.Ops;
 ///   <item>Global — <c>/api/*</c> 전체 (조회 포함). 넉넉하게</item>
 ///   <item>Write — <c>/api/*</c> 의 GET·HEAD·OPTIONS 외 요청 (평점·댓글·제보·신고·관리자 수정)</item>
 ///   <item>Auth — <c>/api/auth/*</c> 전체 (로그인·토큰 갱신·탈퇴). 가장 엄격</item>
+///   <item>Route — <c>/api/routes/*</c> (도보 경로). 요청 하나가 무거워 따로 센다. 웹은 경로를 벗어날 때만 다시 찾으므로(15초 간격) 분당 몇 번이면 된다</item>
 /// </list>
 /// 쓰기·인증 요청은 자기 등급과 Global 을 둘 다 통과해야 한다. <c>/healthz*</c> 는 세지 않는다 (Caddy 헬스체크).
 /// 엔드포인트 메타데이터 없이 경로·메서드로만 나누므로 Endpoints 파일을 고칠 필요가 없다.
@@ -27,6 +28,7 @@ public sealed class RateLimitingOptions
     public RateLimitRule Global { get; set; } = new() { PermitLimit = 1200, WindowSeconds = 60 };
     public RateLimitRule Write { get; set; } = new() { PermitLimit = 60, WindowSeconds = 60 };
     public RateLimitRule Auth { get; set; } = new() { PermitLimit = 30, WindowSeconds = 60 };
+    public RateLimitRule Route { get; set; } = new() { PermitLimit = 30, WindowSeconds = 60 };
 }
 
 public sealed class RateLimitRule
@@ -45,6 +47,7 @@ public enum RateLimitTier
     Read,
     Write,
     Auth,
+    Route,
 }
 
 public static class RateLimiting
@@ -54,6 +57,7 @@ public static class RateLimiting
     {
         if (!request.Path.StartsWithSegments("/api")) return RateLimitTier.None;
         if (request.Path.StartsWithSegments("/api/auth")) return RateLimitTier.Auth;
+        if (request.Path.StartsWithSegments("/api/routes")) return RateLimitTier.Route;
         var m = request.Method;
         return HttpMethods.IsGet(m) || HttpMethods.IsHead(m) || HttpMethods.IsOptions(m)
             ? RateLimitTier.Read
@@ -89,6 +93,7 @@ public static class RateLimiting
         {
             RateLimitTier.Auth => Window("auth:" + ClientKey(ctx), o.Auth),
             RateLimitTier.Write => Window("write:" + ClientKey(ctx), o.Write),
+            RateLimitTier.Route => Window("route:" + ClientKey(ctx), o.Route),
             _ => RateLimitPartition.GetNoLimiter("none"),
         });
 
