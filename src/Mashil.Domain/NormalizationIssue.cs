@@ -54,6 +54,8 @@ public enum IssueType
     AddressChanged = 12,
     /// <summary>Kakao 로 못 찾아 브이월드(정부 주소 DB)로 찾음. 확인용 (Info).</summary>
     FallbackGeocode = 13,
+    /// <summary>원본 좌표가 주소와 멀리 떨어져 주소로 찾은 좌표로 바꿈 (Info, 확인용). <c>GeocodingService.CheckImportedCoordinatesAsync</c>.</summary>
+    CoordinateMismatch = 14,
 }
 
 public enum IssueSeverity { Info = 0, Warning = 1, Error = 2 }

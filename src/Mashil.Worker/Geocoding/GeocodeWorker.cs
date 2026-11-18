@@ -1,3 +1,4 @@
+using Mashil.Import;
 using Mashil.Import.Geocoding;
 using Microsoft.Extensions.Options;
 
@@ -15,6 +16,8 @@ public sealed class GeocodeWorker(
     TimeProvider clock) : BackgroundService
 {
     private readonly GeocodeWorkerOptions _opts = opts.Value;
+    /// <summary>원본 좌표 검증을 마지막으로 돌린 날 (KST). 하루 한 번, 지오코딩할 게 없을 때.</summary>
+    private DateOnly? _coordinateCheckDay;
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -56,6 +59,20 @@ public sealed class GeocodeWorker(
                         r.BudgetExhausted ? "일일 예산 소진" : $"Kakao 호출 불가: {r.Error}", sleep.TotalHours);
                 }
                 else sleep = TimeSpan.FromSeconds(r.Processed > 0 ? _opts.BatchSleepSeconds : _opts.IdleSleepSeconds);
+
+                // 좌표 없는 화장실을 다 처리했으면 하루 한 번 원본 좌표가 주소와 맞는지 확인 (틀린 원본 좌표를 주소 좌표로)
+                var today = DateOnly.FromDateTime(clock.GetUtcNow().UtcDateTime.AddHours(9));
+                if (r.Processed == 0 && !r.BudgetExhausted && !r.GeocoderUnavailable && _coordinateCheckDay != today)
+                {
+                    await using var checkScope = scopeFactory.CreateAsyncScope();
+                    var c = await checkScope.ServiceProvider.GetRequiredService<GeocodingService>().CheckImportedCoordinatesAsync(stoppingToken);
+                    logger.LogInformation("원본 좌표 검증: 대상 {Candidates}, 확인 {Checked}, 바꿈 {Fixed}, API {Calls}{Error}",
+                        c.Candidates, c.Checked, c.Fixed, c.ApiCalls, c.Error is null ? "" : $" — 멈춤: {c.Error}");
+                    // 좌표가 바뀌었으니 중복도 다시 (같은 화장실이 좌표만 달라 둘로 보이던 경우)
+                    var hidden = await DuplicateMarker.MarkAsync(checkScope.ServiceProvider.GetRequiredService<Mashil.Infrastructure.MashilDbContext>(), stoppingToken);
+                    logger.LogInformation("원본 중복 숨김: {Hidden}", hidden);
+                    if (!c.Stopped) _coordinateCheckDay = today; // 멈췄으면 다음 루프에서 이어서 (캐시 덕에 API 는 새 주소만)
+                }
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { return; }
             catch (Exception ex)

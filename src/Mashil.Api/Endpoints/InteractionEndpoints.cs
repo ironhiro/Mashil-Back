@@ -43,7 +43,7 @@ public static class InteractionEndpoints
             var userId = principal.GetUserIdOrThrow();
             if (input.Score is < 1 or > 5)
                 return Results.BadRequest(new { error = "score must be 1..5" });
-            if (!await db.Toilets.Where(ToiletEndpoints.IsVisible).AnyAsync(t => t.Id == toiletId, ct)) return Results.NotFound(); // 삭제된 곳은 받지 않음
+            if (!await db.Toilets.Where(ToiletEndpoints.IsOpenable).AnyAsync(t => t.Id == toiletId, ct)) return Results.NotFound(); // 삭제된 곳은 받지 않음
 
             // 같은 사람이 동시에 두 번 보내면 둘 다 "없음"을 보고 INSERT 해 유니크 위반이 난다 → 한 번 다시 읽어 갱신
             for (var attempt = 0; ; attempt++)
@@ -129,7 +129,7 @@ public static class InteractionEndpoints
                 return Results.BadRequest(new { error = "text required" });
             if (input.Text.Trim().Length > MaxCommentLength)
                 return Results.BadRequest(new { error = $"text too long (max {MaxCommentLength})" });
-            if (!await db.Toilets.Where(ToiletEndpoints.IsVisible).AnyAsync(t => t.Id == toiletId, ct)) return Results.NotFound(); // 삭제된 곳은 받지 않음
+            if (!await db.Toilets.Where(ToiletEndpoints.IsOpenable).AnyAsync(t => t.Id == toiletId, ct)) return Results.NotFound(); // 삭제된 곳은 받지 않음
 
             var c = new Comment { UserId = userId, ToiletId = toiletId, Text = input.Text.Trim() };
             db.Comments.Add(c);

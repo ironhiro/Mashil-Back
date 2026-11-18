@@ -792,6 +792,9 @@ namespace Mashil.Infrastructure.Migrations
                     b.Property<string>("DiaperChangerLocation")
                         .HasColumnType("text");
 
+                    b.Property<long?>("DuplicateOfId")
+                        .HasColumnType("bigint");
+
                     b.Property<bool?>("EmergencyBellInstalled")
                         .HasColumnType("boolean");
 
@@ -922,6 +925,8 @@ namespace Mashil.Infrastructure.Migrations
                         .HasColumnType("text");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("DuplicateOfId");
 
                     b.HasIndex("Location");
 
