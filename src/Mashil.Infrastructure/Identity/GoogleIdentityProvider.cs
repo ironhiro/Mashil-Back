@@ -18,7 +18,11 @@ public sealed class GoogleIdentityProvider(GoogleAuthOptions options, OidcTokenV
     {
         if (string.IsNullOrWhiteSpace(c.IdToken)) throw new AuthFailure("invalid_request", 400, "Google 은 idToken 이 필요");
         var token = await oidc.ValidateAsync(c.IdToken, options.ClientIds, ct);
-        OidcTokenValidator.CheckNonce(token, expectedNonce, options.RequireNonce);
+        // 앱(google_sign_in 7)은 nonce 를 초기화 때 한 번만 정할 수 있어 로그인마다 받은 nonce 를 넣지 못한다.
+        // 웹은 공통 흐름대로 nonce 를 보내므로, 토큰에 nonce 가 없고 필수가 아니면 요청의 nonce 는 보지 않는다.
+        // 토큰에 nonce 가 있으면 그대로 일치해야 한다.
+        var nonceToCheck = OidcTokenValidator.Claim(token, "nonce") is null && !options.RequireNonce ? null : expectedNonce;
+        OidcTokenValidator.CheckNonce(token, nonceToCheck, options.RequireNonce);
         if (string.IsNullOrWhiteSpace(token.Subject)) throw AuthFailure.Invalid("sub 없음");
 
         var email = OidcTokenValidator.Claim(token, "email_verified") is "True" or "true"
