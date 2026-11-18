@@ -27,6 +27,51 @@ public static class ToiletEndpoints
     {
         var group = app.MapGroup("/api/toilets").WithTags("Toilets");
 
+        group.MapGet("/snapshot", async (HttpRequest request, HttpResponse response, ToiletSnapshotProvider snapshots, CancellationToken ct) =>
+        {
+            var s = await snapshots.GetAsync(ct);
+            response.Headers.ETag = s.ETag;
+            // 매번 ETag 로 확인하게 한다 (바뀌지 않았으면 304, 본문 없음)
+            response.Headers.CacheControl = "no-cache";
+            response.Headers.Vary = "Accept-Encoding";
+            if (ToiletSnapshotProvider.Matches(request.Headers.IfNoneMatch.ToString(), s.ETag)) return Results.StatusCode(StatusCodes.Status304NotModified);
+            switch (ToiletSnapshotProvider.PickEncoding(request.Headers.AcceptEncoding.ToString()))
+            {
+                case "br":
+                    response.Headers.ContentEncoding = "br";
+                    return Results.Bytes(s.Brotli, "application/json");
+                case "gzip":
+                    response.Headers.ContentEncoding = "gzip";
+                    return Results.Bytes(s.Gzip, "application/json");
+                default:
+                    return Results.Stream(new System.IO.Compression.GZipStream(new MemoryStream(s.Gzip), System.IO.Compression.CompressionMode.Decompress), "application/json");
+            }
+        })
+        .WithName("GetToiletSnapshot")
+        .WithSummary("전국 화장실 목록 한 벌 (기기에서 근처 찾기·검색)")
+        .WithDescription("""
+            위치를 받지 않는다. 앱이 통째로 받아 근처 찾기·추천·검색을 기기에서 한다 (위치를 서버로 보내지 않기, 2026-11).
+            `{ version, fields, holidays, rows }`: `rows` 는 `fields` 순서의 배열. `schedules` 는 `[요일 1~8, 여는 분, 닫는 분, 휴무 0/1]` 목록.
+            지번 주소가 도로명 주소와 같으면 null. 좌표가 없는 곳은 `lat`·`lng` 가 null (검색에만 나온다).
+            서버는 한 시간마다 다시 만들고, 내용이 같으면 ETag 가 같다. `If-None-Match` 가 맞으면 304. br·gzip 으로 압축해 보낸다.
+            평점·댓글 수는 `/api/toilets/stats`.
+            """)
+        .Produces(StatusCodes.Status200OK, contentType: "application/json")
+        .Produces(StatusCodes.Status304NotModified);
+
+        group.MapGet("/stats", async (ToiletStatsProvider stats, CancellationToken ct) =>
+        {
+            var rows = await stats.GetAsync(ct);
+            return Results.Ok(new
+            {
+                fields = ToiletStatsProvider.Fields,
+                rows = rows.Select(r => new object?[] { r.Id, r.AverageRating, r.RatingCount, r.CommentCount, r.HelpfulUp, r.HelpfulDown }),
+            });
+        })
+        .WithName("GetToiletStats")
+        .WithSummary("화장실별 평점·댓글 집계 (평점이나 댓글이 있는 곳만)")
+        .WithDescription("`{ fields, rows }`, 행은 `[id, averageRating|null, ratingCount, commentCount, helpfulUp, helpfulDown]`. 1분마다 다시 센다. 도움돼요·아니에요는 가려지지 않은 댓글이 받은 표.");
+
         group.MapGet("/near", async (
             double lat,
             double lng,
