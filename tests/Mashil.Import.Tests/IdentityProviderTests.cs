@@ -403,7 +403,7 @@ public class AppleAndCryptoTests
     public void Defaults_apply_only_when_no_documents_are_configured()
     {
         var docs = CurrentConsents(new() { ["Consents:EnforceOnWrite"] = "false" });
-        Assert.Equal([(ConsentDocType.Terms, "1"), (ConsentDocType.Privacy, "1"), (ConsentDocType.LocationTerms, "1")], docs);
+        Assert.Equal([(ConsentDocType.Terms, "1"), (ConsentDocType.Privacy, "1"), (ConsentDocType.AgeOver14, "1")], docs);
         Assert.Equal(3, new ConsentOptions().Current.Count);
     }
 
