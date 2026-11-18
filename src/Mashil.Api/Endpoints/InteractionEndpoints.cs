@@ -151,6 +151,58 @@ public static class InteractionEndpoints
         .Produces(StatusCodes.Status401Unauthorized)
         .Produces(StatusCodes.Status404NotFound);
 
+        // 본인 댓글 고치기 (UGC-07). 숨김 처리된 댓글은 고칠 수 없다 (신고 뒤 내용을 바꿔 피하지 못하게)
+        app.MapPut("/api/comments/{commentId:long}", async (
+            long commentId,
+            CommentInput input,
+            ClaimsPrincipal principal,
+            MashilDbContext db,
+            CancellationToken ct) =>
+        {
+            var userId = principal.GetUserIdOrThrow();
+            if (string.IsNullOrWhiteSpace(input.Text))
+                return Results.BadRequest(new { error = "text required" });
+            if (input.Text.Trim().Length > MaxCommentLength)
+                return Results.BadRequest(new { error = $"text too long (max {MaxCommentLength})" });
+            var c = await db.Comments.FirstOrDefaultAsync(x => x.Id == commentId && x.UserId == userId, ct);
+            if (c is null) return Results.NotFound(); // 남의 댓글도 404 (있는지 알려 주지 않는다)
+            if (c.Hidden) return Results.Conflict(new { error = "hidden" });
+            c.Text = input.Text.Trim();
+            c.UpdatedAt = DateTime.UtcNow;
+            await db.SaveChangesAsync(ct);
+            return Results.NoContent();
+        })
+        .RequireAuthorization()
+        .RequireConsent()
+        .WithSummary("내 댓글 고치기 (인증 필요)")
+        .WithDescription("작성자만. 남의 댓글이거나 없으면 404, 숨김 처리된 댓글이면 409, 빈 글·1000자 초과는 400.")
+        .Produces(StatusCodes.Status204NoContent)
+        .Produces(StatusCodes.Status400BadRequest)
+        .Produces(StatusCodes.Status404NotFound)
+        .Produces(StatusCodes.Status409Conflict);
+
+        // 본인 댓글 지우기 (UGC-07). 그 댓글에 달린 표와 신고도 같이 지운다 (글이 없어졌으니 처리할 것이 없다)
+        app.MapDelete("/api/comments/{commentId:long}", async (
+            long commentId,
+            ClaimsPrincipal principal,
+            MashilDbContext db,
+            CancellationToken ct) =>
+        {
+            var userId = principal.GetUserIdOrThrow();
+            await using var tx = await db.Database.BeginTransactionAsync(ct);
+            if (!await db.Comments.AnyAsync(c => c.Id == commentId && c.UserId == userId, ct)) return Results.NotFound();
+            await db.CommentVotes.Where(v => v.CommentId == commentId).ExecuteDeleteAsync(ct);
+            await db.CommentReports.Where(r => r.CommentId == commentId).ExecuteDeleteAsync(ct);
+            await db.Comments.Where(c => c.Id == commentId).ExecuteDeleteAsync(ct);
+            await tx.CommitAsync(ct);
+            return Results.NoContent();
+        })
+        .RequireAuthorization()
+        .WithSummary("내 댓글 지우기 (인증 필요)")
+        .WithDescription("작성자만. 남의 댓글이거나 없으면 404. 표(도움돼요)와 신고 기록도 함께 지운다.")
+        .Produces(StatusCodes.Status204NoContent)
+        .Produces(StatusCodes.Status404NotFound);
+
         app.MapPut("/api/comments/{commentId:long}/vote", async (
             long commentId,
             VoteInput input,
