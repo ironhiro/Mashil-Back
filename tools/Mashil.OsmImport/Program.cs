@@ -8,6 +8,7 @@
 //
 // --seoul: 서울 안은 서울시 도보 네트워크(Open API, 횡단보도·육교·지하철 출입구가 이어진 보행자용 노드·링크)로 바꾼다.
 //          서울 링크가 있는 약 200m 격자 칸의 OSM 간선은 빼고 서울 링크를 넣는다 (두 망을 섞지 않는다).
+//          두 망은 노드 id 가 따로라, 서울 칸 가까이의 OSM 끝점을 12m 안의 서울 노드와 짧은 간선(stitch)으로 잇는다 (NetworkStitcher).
 //          인증키는 사용자 비밀 SeoulOpenData:ApiKey (Mashil.Api 와 공유) 또는 환경 변수 SeoulOpenData__ApiKey.
 //
 // 1) 길(way)을 읽어 걸을 수 있는 것만 남기고, 노드가 몇 개의 길에 쓰이는지 센다 (2개 이상이면 교차점)
@@ -215,6 +216,7 @@ if (withSeoul)
     // 서울 노드 id 는 OSM id 와 겹치지 않게 큰 수를 더한다 (OSM 노드 id 는 아직 10^11 아래)
     const long seoulOffset = 9_000_000_000_000_000;
     var added = 0;
+    var osmEdgeCount = edges.Count; // 여기까지가 OSM 간선
     foreach (var l in seoul)
     {
         if (bbox is { } b && !l.Geom.Coordinates.Any(c => c.X >= b.MinLng && c.X <= b.MaxLng && c.Y >= b.MinLat && c.Y <= b.MaxLat)) continue;
@@ -227,6 +229,39 @@ if (withSeoul)
         added++;
     }
     Console.WriteLine($"3b) 서울: OSM 간선 {removed:N0}개를 빼고 서울 링크 {added:N0}개 (횡단보도 {seoul.Count(l => l.Crosswalk):N0}) ({total.Elapsed:mm\\:ss})");
+
+    // 3c) 두 망 잇기: 서울 칸과 그 이웃 칸에 있는 OSM 끝점 → 가까운 서울 노드 (NetworkStitcher)
+    bool NearSeoul(Coordinate c)
+    {
+        var (x, y) = Cell(c.X, c.Y);
+        for (var dx = -1; dx <= 1; dx++)
+            for (var dy = -1; dy <= 1; dy++)
+                if (covered.Contains((x + dx, y + dy))) return true;
+        return false;
+    }
+    var osmEnds = new List<StitchNode>();
+    for (var k = 0; k < osmEdgeCount; k++)
+    {
+        var e = edges[k];
+        var a = e.Geom.Coordinates[0];
+        var z = e.Geom.Coordinates[^1];
+        if (NearSeoul(a)) osmEnds.Add(new StitchNode(e.Source, a.X, a.Y));
+        if (NearSeoul(z)) osmEnds.Add(new StitchNode(e.Target, z.X, z.Y));
+    }
+    var seoulEnds = new List<StitchNode>();
+    for (var k = osmEdgeCount; k < edges.Count; k++)
+    {
+        var e = edges[k];
+        seoulEnds.Add(new StitchNode(e.Source, e.Geom.Coordinates[0].X, e.Geom.Coordinates[0].Y));
+        seoulEnds.Add(new StitchNode(e.Target, e.Geom.Coordinates[^1].X, e.Geom.Coordinates[^1].Y));
+    }
+    var stitches = NetworkStitcher.Stitch(osmEnds, seoulEnds);
+    foreach (var s in stitches)
+    {
+        var line = factory.CreateLineString([new Coordinate(s.Osm.Lng, s.Osm.Lat), new Coordinate(s.Seoul.Lng, s.Seoul.Lat)]);
+        edges.Add((s.Osm.Id, s.Seoul.Id, line, s.LengthM, 1.0f, false, "stitch"));
+    }
+    Console.WriteLine($"3c) 서울·OSM 연결 {stitches.Count:N0}개 (후보 OSM 끝점 {osmEnds.Select(n => n.Id).Distinct().Count():N0}) ({total.Elapsed:mm\\:ss})");
 }
 
 static (int, int) Cell(double lng, double lat) => ((int)Math.Floor(lng / 0.002), (int)Math.Floor(lat / 0.002));
