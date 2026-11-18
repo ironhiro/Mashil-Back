@@ -17,6 +17,22 @@ public static class InteractionEndpoints
     {
         var ratings = app.MapGroup("/api/toilets/{toiletId:long}/ratings").WithTags("Ratings");
 
+        // 상세를 다시 열 때 내가 매긴 별을 보여 주려고 (없으면 score null)
+        ratings.MapGet("/me", async (long toiletId, ClaimsPrincipal principal, MashilDbContext db, CancellationToken ct) =>
+        {
+            var userId = principal.GetUserIdOrThrow();
+            var score = await db.Ratings
+                .Where(r => r.UserId == userId && r.ToiletId == toiletId)
+                .Select(r => (int?)r.Score)
+                .FirstOrDefaultAsync(ct);
+            return Results.Ok(new MyRatingResponse(score));
+        })
+        .RequireAuthorization()
+        .WithSummary("이 화장실에 내가 매긴 별점 (인증 필요)")
+        .WithDescription("매긴 적이 없으면 `score: null`.")
+        .Produces<MyRatingResponse>()
+        .Produces(StatusCodes.Status401Unauthorized);
+
         ratings.MapPost("", async (
             long toiletId,
             RatingInput input,
@@ -257,6 +273,7 @@ public static class InteractionEndpoints
             ChangeRequestReview review,
             ClaimsPrincipal principal,
             MashilDbContext db,
+            ToiletSnapshotProvider snapshots,
             CancellationToken ct) =>
         {
             await using var tx = await db.Database.BeginTransactionAsync(ct);
@@ -288,6 +305,8 @@ public static class InteractionEndpoints
             cr.ReviewNote = review.Note;
             await db.SaveChangesAsync(ct);
             await tx.CommitAsync(ct);
+            // 앱의 근처 찾기는 전국 목록(스냅샷)을 기기에서 쓴다 → 승인하면 바로 다시 만들어야 지도에 나온다
+            if (applied is not null) snapshots.MarkStale();
             return applied is null ? Results.NoContent() : Results.Ok(applied);
         })
         .WithSummary("변경 요청 승인/반려 (관리자)")
@@ -370,6 +389,9 @@ public static class InteractionEndpoints
     /// <summary>별점 페이로드.</summary>
     /// <param name="Score">1~5 정수.</param>
     public sealed record RatingInput(int Score);
+
+    /// <param name="Score">내가 매긴 별점 1~5, 없으면 null.</param>
+    public sealed record MyRatingResponse(int? Score);
 
     /// <summary>댓글 페이로드.</summary>
     /// <param name="Text">본문 (앞뒤 공백 trim 후 저장; 빈 값 거부).</param>

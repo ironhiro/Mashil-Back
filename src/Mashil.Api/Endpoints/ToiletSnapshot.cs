@@ -46,16 +46,29 @@ public sealed class ToiletSnapshotProvider(IServiceScopeFactory scopes, TimeProv
     {
         var c = _current;
         if (c is null) return await RefreshAsync(ct);
-        if (time.GetUtcNow() - c.BuiltAt >= MaxAge && Interlocked.CompareExchange(ref _refreshing, 1, 0) == 0)
-        {
-            _ = Task.Run(async () =>
-            {
-                try { await RefreshAsync(CancellationToken.None); }
-                catch (Exception e) { logger.LogError(e, "Toilet snapshot background rebuild failed"); }
-                finally { Volatile.Write(ref _refreshing, 0); }
-            }, CancellationToken.None);
-        }
+        if (time.GetUtcNow() - c.BuiltAt >= MaxAge) RebuildInBackground();
         return c;
+    }
+
+    /// <summary>
+    /// 관리자 승인·수정처럼 화장실이 바뀐 직후 부른다: 한 시간을 기다리지 않고 뒤에서 바로 다시 만든다.
+    /// 다 만들어지기 전까지는 지난 사본을 준다 (몇 초).
+    /// </summary>
+    public void MarkStale()
+    {
+        if (_current is { } c) _current = c with { BuiltAt = DateTimeOffset.MinValue };
+        RebuildInBackground();
+    }
+
+    private void RebuildInBackground()
+    {
+        if (Interlocked.CompareExchange(ref _refreshing, 1, 0) != 0) return;
+        _ = Task.Run(async () =>
+        {
+            try { await RefreshAsync(CancellationToken.None); }
+            catch (Exception e) { logger.LogError(e, "Toilet snapshot background rebuild failed"); }
+            finally { Volatile.Write(ref _refreshing, 0); }
+        }, CancellationToken.None);
     }
 
     private async Task<Snapshot> RefreshAsync(CancellationToken ct)

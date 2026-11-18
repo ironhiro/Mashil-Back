@@ -309,13 +309,14 @@ public static class AdminEndpoints
             .WithDescription("지금 값(`current`), 원본 값(`source`, 제보로 추가된 곳은 null), 오버라이드 이력(꺼진 것 포함, 최신순), 이 화장실에 온 변경 요청, Open 이슈 수.")
             .Produces<ToiletAdminView>();
 
-        admin.MapPost("/toilets/{id:long}/overrides", async (long id, JsonElement body, ClaimsPrincipal principal, MashilDbContext db, CancellationToken ct) =>
+        admin.MapPost("/toilets/{id:long}/overrides", async (long id, JsonElement body, ClaimsPrincipal principal, MashilDbContext db, ToiletSnapshotProvider snapshots, CancellationToken ct) =>
             {
                 try
                 {
-                    return await ToiletAdminEditor.ApplyAsync(db, id, body, principal.GetUserIdOrThrow(), DateTime.UtcNow, ct) is { } r
-                        ? Results.Ok(r)
-                        : Results.NotFound();
+                    if (await ToiletAdminEditor.ApplyAsync(db, id, body, principal.GetUserIdOrThrow(), DateTime.UtcNow, ct) is not { } r)
+                        return Results.NotFound();
+                    snapshots.MarkStale(); // 지도(기기 목록)에 바로 반영
+                    return Results.Ok(r);
                 }
                 catch (FormatException ex)
                 {
@@ -331,8 +332,12 @@ public static class AdminEndpoints
             .Produces<AdminEditResult>()
             .Produces(StatusCodes.Status404NotFound);
 
-        admin.MapDelete("/toilets/{id:long}/overrides/{overrideId:long}", async (long id, long overrideId, MashilDbContext db, CancellationToken ct) =>
-                await ToiletAdminEditor.DeactivateOverrideAsync(db, id, overrideId, DateTime.UtcNow, ct) ? Results.NoContent() : Results.NotFound())
+        admin.MapDelete("/toilets/{id:long}/overrides/{overrideId:long}", async (long id, long overrideId, MashilDbContext db, ToiletSnapshotProvider snapshots, CancellationToken ct) =>
+            {
+                if (!await ToiletAdminEditor.DeactivateOverrideAsync(db, id, overrideId, DateTime.UtcNow, ct)) return Results.NotFound();
+                snapshots.MarkStale();
+                return Results.NoContent();
+            })
             .WithSummary("오버라이드 끄기 (관리자)")
             .WithDescription("출처와 상관없이(관리자, 변경 요청, 지오코딩) 활성 오버라이드 하나를 끄고 원본부터 다시 계산한다. 이력에는 꺼진 채 남는다.")
             .Produces(StatusCodes.Status204NoContent)
