@@ -106,7 +106,7 @@ namespace Mashil.Infrastructure.Migrations
                         .IsRequired()
                         .HasColumnType("jsonb");
 
-                    b.Property<Guid>("RequesterId")
+                    b.Property<Guid?>("RequesterId")
                         .HasColumnType("uuid");
 
                     b.Property<string>("ReviewNote")
@@ -1225,8 +1225,7 @@ namespace Mashil.Infrastructure.Migrations
                     b.HasOne("Mashil.Domain.UserProfile", null)
                         .WithMany()
                         .HasForeignKey("RequesterId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
+                        .OnDelete(DeleteBehavior.Restrict);
 
                     b.HasOne("Mashil.Domain.UserProfile", null)
                         .WithMany()

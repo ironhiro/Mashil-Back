@@ -205,7 +205,8 @@ public static class InteractionEndpoints
             MashilDbContext db,
             CancellationToken ct) =>
         {
-            var requesterId = principal.GetUserIdOrThrow();
+            // 로그인했으면 그 회원, 아니면 비회원 제보 (요청 빈도 제한은 쓰기 등급, IP 기준)
+            var requesterId = principal.TryGetUserId();
             if (ValidateChangeRequest(input, out var payload) is { } error)
                 return Results.BadRequest(new { error });
             if (input.TargetToiletId is { } targetId && !await db.Toilets.AnyAsync(t => t.Id == targetId, ct))
@@ -222,14 +223,12 @@ public static class InteractionEndpoints
             await db.SaveChangesAsync(ct);
             return Results.Created($"/api/change-requests/{cr.Id}", cr);
         })
-        .RequireAuthorization()
         .RequireConsent()
-        .WithSummary("변경 요청 제출 (인증 필요)")
+        .WithSummary("변경 요청 제출 (로그인 없이도 가능)")
         .WithDescription("화장실 추가/수정/삭제 요청을 큐에 적재. 즉시 반영 안 됨 — 관리자 승인 후 별도 서비스가 적용. 상태는 항상 `Pending` 으로 시작. " +
                          "`payloadJson` 은 JSON 객체(최대 16KB). `Add` 는 대상 없이 `name` 필수, `Edit`/`Delete` 는 `targetToiletId` 필수 — 어기면 400, 없는 화장실이면 404.")
         .Produces<ChangeRequest>(StatusCodes.Status201Created)
         .Produces(StatusCodes.Status400BadRequest)
-        .Produces(StatusCodes.Status401Unauthorized)
         .Produces(StatusCodes.Status404NotFound);
 
         // Admin endpoints
@@ -310,7 +309,7 @@ public static class InteractionEndpoints
 
     /// <summary>관리자 변경 요청 큐의 행. <see cref="ChangeRequest"/> 와 같은 필드 + 승인 반영 결과.</summary>
     public sealed record AdminChangeRequestRow(
-        long Id, Guid RequesterId, long? TargetToiletId, ChangeRequestKind Kind, string PayloadJson, ChangeRequestStatus Status,
+        long Id, Guid? RequesterId, long? TargetToiletId, ChangeRequestKind Kind, string PayloadJson, ChangeRequestStatus Status,
         Guid? ReviewedById, DateTime? ReviewedAt, string? ReviewNote, DateTime CreatedAt,
         Mashil.Import.Admin.ChangeRequestOutcome? Applied);
 
