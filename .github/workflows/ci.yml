@@ -150,6 +150,16 @@ jobs:
           # 어떤 웹 커밋이 들어갔는지 (배포 점검과 사람이 /version.json 으로 확인)
           printf '{"web":"%s"}\n' "$(git rev-parse HEAD)" > "$GITHUB_WORKSPACE/web-dist/version.json"
           test -f "$GITHUB_WORKSPACE/web-dist/index.html"
+      # 배포 이미지에 들어갈 웹 번들 검사: VITE_ 변수 객체·비밀 모양 문자열 (Mashil-Front tool/check-env.mjs)
+      - name: Web env leak check
+        if: matrix.target == 'api'
+        working-directory: web-src
+        run: |
+          if [ -f tool/check-env.mjs ]; then
+            node tool/check-env.mjs "$GITHUB_WORKSPACE/web-dist"
+          else
+            echo "::warning::웹 main 에 tool/check-env.mjs 가 아직 없어 검사를 건너뜁니다"
+          fi
 
       - uses: docker/setup-buildx-action@v3
 
