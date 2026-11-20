@@ -85,7 +85,7 @@ for stage in prod dev; do
   mkapp "mashil-api$sfx" "$REG/mashil-api:latest" "$minApi" 1 0.5 1.0Gi yes \
     --secrets "db=$cs" "jwt=$jwt" \
     --env-vars ASPNETCORE_ENVIRONMENT=Production "ConnectionStrings__Postgres=secretref:db" "Jwt__SigningKey=secretref:jwt" \
-      ForwardedHeaders__TrustIngress=true "Sentry__Environment=$envname" Routing__Enabled=true
+      ForwardedHeaders__TrustIngress=true "Sentry__Environment=$envname" Routing__Enabled=false
 
   echo "== $stage: Worker mashil-worker$sfx"
   mkapp "mashil-worker$sfx" "$REG/mashil-worker:latest" "$minWorker" 1 0.25 0.5Gi no \
