@@ -17,30 +17,30 @@ public static class InteractionEndpoints
     {
         var ratings = app.MapGroup("/api/toilets/{toiletId:long}/ratings").WithTags("Ratings");
 
-        // 상세를 다시 열 때 내가 매긴 별을 보여 주려고 (없으면 score null)
-        ratings.MapGet("/me", async (long toiletId, ClaimsPrincipal principal, MashilDbContext db, CancellationToken ct) =>
+        // 상세를 다시 열 때 내가 매긴 별을 보여 주려고 (없으면 score null).
+        // 로그인했으면 회원 별점, 아니면 X-Mashil-Device 기기 키의 별점 (DeviceKey)
+        ratings.MapGet("/me", async (long toiletId, HttpContext http, MashilDbContext db, CancellationToken ct) =>
         {
-            var userId = principal.GetUserIdOrThrow();
-            var score = await db.Ratings
-                .Where(r => r.UserId == userId && r.ToiletId == toiletId)
+            if (RatingOwner.From(http) is not { } owner) return Results.Ok(new MyRatingResponse(null));
+            var score = await owner.Filter(db.Ratings)
+                .Where(r => r.ToiletId == toiletId)
                 .Select(r => (int?)r.Score)
                 .FirstOrDefaultAsync(ct);
             return Results.Ok(new MyRatingResponse(score));
         })
-        .RequireAuthorization()
-        .WithSummary("이 화장실에 내가 매긴 별점 (인증 필요)")
-        .WithDescription("매긴 적이 없으면 `score: null`.")
-        .Produces<MyRatingResponse>()
-        .Produces(StatusCodes.Status401Unauthorized);
+        .WithSummary("이 화장실에 내가 매긴 별점")
+        .WithDescription("로그인했으면 회원 별점, 아니면 `X-Mashil-Device` 헤더(UUID) 기기 키의 별점. 매긴 적이 없거나 둘 다 없으면 `score: null`.")
+        .Produces<MyRatingResponse>();
 
         ratings.MapPost("", async (
             long toiletId,
             RatingInput input,
-            ClaimsPrincipal principal,
+            HttpContext http,
             MashilDbContext db,
             CancellationToken ct) =>
         {
-            var userId = principal.GetUserIdOrThrow();
+            if (RatingOwner.From(http) is not { } owner)
+                return Results.BadRequest(new { error = "device_key_required" });
             if (input.Score is < 1 or > 5)
                 return Results.BadRequest(new { error = "score must be 1..5" });
             if (!await db.Toilets.Where(ToiletEndpoints.IsOpenable).AnyAsync(t => t.Id == toiletId, ct)) return Results.NotFound(); // 삭제된 곳은 받지 않음
@@ -48,10 +48,10 @@ public static class InteractionEndpoints
             // 같은 사람이 동시에 두 번 보내면 둘 다 "없음"을 보고 INSERT 해 유니크 위반이 난다 → 한 번 다시 읽어 갱신
             for (var attempt = 0; ; attempt++)
             {
-                var existing = await db.Ratings.FirstOrDefaultAsync(r => r.UserId == userId && r.ToiletId == toiletId, ct);
+                var existing = await owner.Filter(db.Ratings).FirstOrDefaultAsync(r => r.ToiletId == toiletId, ct);
                 if (existing is null)
                 {
-                    db.Ratings.Add(new Rating { UserId = userId, ToiletId = toiletId, Score = input.Score });
+                    db.Ratings.Add(new Rating { UserId = owner.UserId, DeviceKeyHash = owner.DeviceKeyHash, ToiletId = toiletId, Score = input.Score });
                 }
                 else
                 {
@@ -69,13 +69,11 @@ public static class InteractionEndpoints
                 }
             }
         })
-        .RequireAuthorization()
-        .RequireConsent()
-        .WithSummary("화장실 별점 등록/갱신 (인증 필요)")
-        .WithDescription("(user, toilet) 유니크 — 같은 사용자가 같은 화장실에 다시 POST 하면 기존 점수 갱신. `score` 1~5 범위 외면 400, 없거나 삭제(Removed)된 화장실이면 404.")
+        .RequireConsent() // 회원이면 약관 동의 확인. 로그인 없이 매기는 별점은 동의 화면이 없다 (개인정보를 받지 않음)
+        .WithSummary("화장실 별점 등록/갱신 (로그인 없이도)")
+        .WithDescription("로그인했으면 회원 별점, 아니면 `X-Mashil-Device` 헤더(UUID)의 기기 키 별점. 같은 주인이 같은 화장실에 다시 POST 하면 기존 점수 갱신. 둘 다 없으면 400 `device_key_required`, `score` 1~5 범위 외면 400, 없거나 삭제(Removed)된 화장실이면 404.")
         .Produces(StatusCodes.Status204NoContent)
         .Produces(StatusCodes.Status400BadRequest)
-        .Produces(StatusCodes.Status401Unauthorized)
         .Produces(StatusCodes.Status404NotFound);
 
         var comments = app.MapGroup("/api/toilets/{toiletId:long}/comments").WithTags("Comments");
@@ -441,6 +439,18 @@ public static class InteractionEndpoints
     /// <summary>별점 페이로드.</summary>
     /// <param name="Score">1~5 정수.</param>
     public sealed record RatingInput(int Score);
+
+    /// <summary>별점의 주인: 회원(JWT) 또는 로그인 없는 기기 키. 회원이 우선이다.</summary>
+    internal sealed record RatingOwner(Guid? UserId, string? DeviceKeyHash)
+    {
+        public static RatingOwner? From(HttpContext http) =>
+            http.User.TryGetUserId() is { } userId ? new RatingOwner(userId, null)
+            : DeviceKey.TryReadHash(http.Request) is { } hash ? new RatingOwner(null, hash)
+            : null;
+
+        public IQueryable<Rating> Filter(IQueryable<Rating> q) =>
+            UserId is { } u ? q.Where(r => r.UserId == u) : q.Where(r => r.DeviceKeyHash == DeviceKeyHash);
+    }
 
     /// <param name="Score">내가 매긴 별점 1~5, 없으면 null.</param>
     public sealed record MyRatingResponse(int? Score);
