@@ -231,10 +231,17 @@ public sealed class MashilDbContext(DbContextOptions<MashilDbContext> options) :
             e.ToTable("ratings");
             e.HasKey(r => r.Id);
             e.HasIndex(r => new { r.UserId, r.ToiletId }).IsUnique();
+            // 로그인 없이 매긴 별점: 기기 키마다 화장실 하나에 하나 (UserId 가 null 인 줄은 위 유니크에 안 걸린다)
+            e.HasIndex(r => new { r.DeviceKeyHash, r.ToiletId }).IsUnique().HasFilter("\"DeviceKeyHash\" IS NOT NULL");
+            e.Property(r => r.DeviceKeyHash).HasMaxLength(64);
             e.HasIndex(r => r.ToiletId);
             e.HasOne<Toilet>().WithMany().HasForeignKey(r => r.ToiletId).OnDelete(DeleteBehavior.Restrict);
-            e.HasOne<UserProfile>().WithMany().HasForeignKey(r => r.UserId).OnDelete(DeleteBehavior.Restrict);
-            e.ToTable(t => t.HasCheckConstraint("CK_ratings_Score", "\"Score\" BETWEEN 1 AND 5"));
+            e.HasOne<UserProfile>().WithMany().HasForeignKey(r => r.UserId).IsRequired(false).OnDelete(DeleteBehavior.Restrict);
+            e.ToTable(t =>
+            {
+                t.HasCheckConstraint("CK_ratings_Score", "\"Score\" BETWEEN 1 AND 5");
+                t.HasCheckConstraint("CK_ratings_Owner", "(\"UserId\" IS NULL) <> (\"DeviceKeyHash\" IS NULL)");
+            });
         });
 
         b.Entity<Comment>(e =>

@@ -13,6 +13,8 @@ namespace Mashil.Api.Ops;
 ///   <item>Global — <c>/api/*</c> 전체 (조회 포함). 넉넉하게</item>
 ///   <item>Write — <c>/api/*</c> 의 GET·HEAD·OPTIONS 외 요청 (평점·댓글·제보·신고·관리자 수정)</item>
 ///   <item>Auth — <c>/api/auth/*</c> 전체 (로그인·토큰 갱신·탈퇴). 가장 엄격</item>
+///   <item>AnonymousRating — 로그인 없이 매기는 별점 (<c>POST /api/toilets/{id}/ratings</c>, Authorization 없음).
+///   기기 키는 아무나 새로 만들 수 있어서, 한 IP 에서 키를 바꿔 가며 별점을 쌓지 못하게 Write 에 더해 센다</item>
 /// </list>
 /// 쓰기·인증 요청은 자기 등급과 Global 을 둘 다 통과해야 한다. <c>/healthz*</c> 는 세지 않는다 (Caddy 헬스체크).
 /// 엔드포인트 메타데이터 없이 경로·메서드로만 나누므로 Endpoints 파일을 고칠 필요가 없다.
@@ -27,6 +29,7 @@ public sealed class RateLimitingOptions
     public RateLimitRule Global { get; set; } = new() { PermitLimit = 1200, WindowSeconds = 60 };
     public RateLimitRule Write { get; set; } = new() { PermitLimit = 60, WindowSeconds = 60 };
     public RateLimitRule Auth { get; set; } = new() { PermitLimit = 30, WindowSeconds = 60 };
+    public RateLimitRule AnonymousRating { get; set; } = new() { PermitLimit = 20, WindowSeconds = 600 };
 }
 
 public sealed class RateLimitRule
@@ -45,6 +48,8 @@ public enum RateLimitTier
     Read,
     Write,
     Auth,
+    /// <summary>로그인 없는 별점. Write 와 이것을 둘 다 통과해야 한다.</summary>
+    AnonymousRating,
 }
 
 public static class RateLimiting
@@ -55,9 +60,16 @@ public static class RateLimiting
         if (!request.Path.StartsWithSegments("/api")) return RateLimitTier.None;
         if (request.Path.StartsWithSegments("/api/auth")) return RateLimitTier.Auth;
         var m = request.Method;
-        return HttpMethods.IsGet(m) || HttpMethods.IsHead(m) || HttpMethods.IsOptions(m)
-            ? RateLimitTier.Read
-            : RateLimitTier.Write;
+        if (HttpMethods.IsGet(m) || HttpMethods.IsHead(m) || HttpMethods.IsOptions(m)) return RateLimitTier.Read;
+        return IsAnonymousRating(request) ? RateLimitTier.AnonymousRating : RateLimitTier.Write;
+    }
+
+    /// <summary><c>POST /api/toilets/{id}/ratings</c> 를 Authorization 헤더 없이 (기기 키로) 보낸 요청.</summary>
+    private static bool IsAnonymousRating(HttpRequest request)
+    {
+        if (!HttpMethods.IsPost(request.Method) || request.Headers.Authorization.Count > 0) return false;
+        var parts = request.Path.Value?.Trim('/').Split('/');
+        return parts is ["api", "toilets", var id, "ratings"] && long.TryParse(id, out _);
     }
 
     /// <summary>
@@ -88,11 +100,16 @@ public static class RateLimiting
         var tiered = PartitionedRateLimiter.Create<HttpContext, string>(ctx => Classify(ctx.Request) switch
         {
             RateLimitTier.Auth => Window("auth:" + ClientKey(ctx), o.Auth),
-            RateLimitTier.Write => Window("write:" + ClientKey(ctx), o.Write),
+            RateLimitTier.Write or RateLimitTier.AnonymousRating => Window("write:" + ClientKey(ctx), o.Write),
             _ => RateLimitPartition.GetNoLimiter("none"),
         });
 
-        return PartitionedRateLimiter.CreateChained(global, tiered);
+        var anonymousRating = PartitionedRateLimiter.Create<HttpContext, string>(ctx =>
+            Classify(ctx.Request) == RateLimitTier.AnonymousRating
+                ? Window("anon-rating:" + ClientKey(ctx), o.AnonymousRating)
+                : RateLimitPartition.GetNoLimiter("none"));
+
+        return PartitionedRateLimiter.CreateChained(global, tiered, anonymousRating);
     }
 
     private static RateLimitPartition<string> Window(string key, RateLimitRule rule) =>

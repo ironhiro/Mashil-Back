@@ -633,6 +633,10 @@ namespace Mashil.Infrastructure.Migrations
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<string>("DeviceKeyHash")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
                     b.Property<int>("Score")
                         .HasColumnType("integer");
 
@@ -642,18 +646,24 @@ namespace Mashil.Infrastructure.Migrations
                     b.Property<DateTime>("UpdatedAt")
                         .HasColumnType("timestamp with time zone");
 
-                    b.Property<Guid>("UserId")
+                    b.Property<Guid?>("UserId")
                         .HasColumnType("uuid");
 
                     b.HasKey("Id");
 
                     b.HasIndex("ToiletId");
 
+                    b.HasIndex("DeviceKeyHash", "ToiletId")
+                        .IsUnique()
+                        .HasFilter("\"DeviceKeyHash\" IS NOT NULL");
+
                     b.HasIndex("UserId", "ToiletId")
                         .IsUnique();
 
                     b.ToTable("ratings", null, t =>
                         {
+                            t.HasCheckConstraint("CK_ratings_Owner", "(\"UserId\" IS NULL) <> (\"DeviceKeyHash\" IS NULL)");
+
                             t.HasCheckConstraint("CK_ratings_Score", "\"Score\" BETWEEN 1 AND 5");
                         });
                 });
@@ -1347,8 +1357,7 @@ namespace Mashil.Infrastructure.Migrations
                     b.HasOne("Mashil.Domain.UserProfile", null)
                         .WithMany()
                         .HasForeignKey("UserId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
+                        .OnDelete(DeleteBehavior.Restrict);
                 });
 
             modelBuilder.Entity("Mashil.Domain.RawToiletRecord", b =>

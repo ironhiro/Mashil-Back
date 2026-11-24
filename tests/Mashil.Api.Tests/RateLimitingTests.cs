@@ -16,6 +16,8 @@ public class RateLimitingTests
     [InlineData("GET", "/api/toilets/near", RateLimitTier.Read)]
     [InlineData("OPTIONS", "/api/toilets/1/comments", RateLimitTier.Read)]
     [InlineData("POST", "/api/toilets/1/comments", RateLimitTier.Write)]
+    [InlineData("POST", "/api/toilets/1/ratings", RateLimitTier.AnonymousRating)] // Authorization 없는 별점 = 로그인 없는 기기 키 별점
+    [InlineData("POST", "/api/toilets/x/ratings", RateLimitTier.Write)]
     [InlineData("PATCH", "/api/admin/comments/3", RateLimitTier.Write)]
     [InlineData("PUT", "/api/comments/3", RateLimitTier.Write)] // 내 댓글 고치기
     [InlineData("DELETE", "/api/comments/3", RateLimitTier.Write)] // 내 댓글 지우기
@@ -61,6 +63,8 @@ public class RateLimitingTests
             ["RateLimiting:Write:WindowSeconds"] = "60",
             ["RateLimiting:Auth:PermitLimit"] = "2",
             ["RateLimiting:Auth:WindowSeconds"] = "30",
+            ["RateLimiting:AnonymousRating:PermitLimit"] = "2",
+            ["RateLimiting:AnonymousRating:WindowSeconds"] = "600",
             ["ForwardedHeaders:KnownNetworks:0"] = "10.9.0.0/24",
         });
         builder.Services.AddMashilForwardedHeaders(builder.Configuration);
@@ -74,17 +78,18 @@ public class RateLimitingTests
         return app.GetTestServer();
     }
 
-    private static Task<HttpContext> Send(TestServer server, string method, string path, string remote, string? forwardedFor = null) =>
+    private static Task<HttpContext> Send(TestServer server, string method, string path, string remote, string? forwardedFor = null, string? bearer = null) =>
         server.SendAsync(c =>
         {
             c.Request.Method = method;
             c.Request.Path = path;
             c.Connection.RemoteIpAddress = IPAddress.Parse(remote);
             if (forwardedFor is not null) c.Request.Headers["X-Forwarded-For"] = forwardedFor;
+            if (bearer is not null) c.Request.Headers.Authorization = "Bearer " + bearer;
         });
 
-    private static async Task<int> Status(TestServer server, string method, string path, string remote, string? forwardedFor = null) =>
-        (await Send(server, method, path, remote, forwardedFor)).Response.StatusCode;
+    private static async Task<int> Status(TestServer server, string method, string path, string remote, string? forwardedFor = null, string? bearer = null) =>
+        (await Send(server, method, path, remote, forwardedFor, bearer)).Response.StatusCode;
 
     [Fact]
     public async Task Auth_tier_returns_429_with_retry_after()
@@ -119,10 +124,24 @@ public class RateLimitingTests
     {
         using var server = await StartAsync();
         for (var i = 0; i < 3; i++)
-            Assert.Equal(200, await Status(server, "POST", "/api/toilets/1/ratings", Proxy, "203.0.113.4"));
-        Assert.Equal(429, await Status(server, "POST", "/api/toilets/1/ratings", Proxy, "203.0.113.4"));
+            Assert.Equal(200, await Status(server, "POST", "/api/toilets/1/comments", Proxy, "203.0.113.4"));
+        Assert.Equal(429, await Status(server, "POST", "/api/toilets/1/comments", Proxy, "203.0.113.4"));
         // 쓰기 한도를 넘겨도 조회는 된다 (Global 8 중 5 사용 — 거절된 요청은 미들웨어가 한 번 더 시도해서 2 를 쓴다)
         Assert.Equal(200, await Status(server, "GET", "/api/toilets/1", Proxy, "203.0.113.4"));
+    }
+
+    [Fact]
+    public async Task Anonymous_ratings_have_a_tighter_limit_than_member_ratings()
+    {
+        using var server = await StartAsync();
+        // 기기 키는 아무나 새로 만들 수 있어 IP 마다 따로 센다 (테스트 한도 2)
+        for (var i = 0; i < 2; i++)
+            Assert.Equal(200, await Status(server, "POST", $"/api/toilets/{i + 1}/ratings", Proxy, "203.0.113.5"));
+        Assert.Equal(429, await Status(server, "POST", "/api/toilets/9/ratings", Proxy, "203.0.113.5"));
+
+        // 회원(Authorization 있음)은 Write 한도(3)만 본다
+        for (var i = 0; i < 3; i++)
+            Assert.Equal(200, await Status(server, "POST", "/api/toilets/1/ratings", Proxy, "203.0.113.6", bearer: "t"));
     }
 
     [Fact]
