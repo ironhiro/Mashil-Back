@@ -128,6 +128,14 @@ jobs:
         if: matrix.target == 'api'
         with:
           python-version: "3.12"
+      # seoul.go.kr 은 해외(GitHub 러너)에서 자주 끊긴다 (2026-11-26 연결 시간 초과로 배포 실패).
+      # 만든 woff2 를 캐시해 두면 make_fonts.py 가 내려받지 않고 넘어간다. 스크립트가 바뀌면 다시 만든다
+      - name: Cache web fonts
+        if: matrix.target == 'api'
+        uses: actions/cache@v4
+        with:
+          path: web-src/public/fonts/SeoulNamsan*.woff2
+          key: seoul-fonts-${{ hashFiles('web-src/tool/make_fonts.py') }}
       - name: Web fonts
         if: matrix.target == 'api'
         working-directory: web-src
