@@ -25,7 +25,7 @@ OAuth 와 App Links 모두 앱 서명 인증서를 등록하므로 이것부터 
 
 ## 1. Kakao
 
-docs/AUTH.md §1. 콘솔에서 카카오 로그인·OIDC ON, 동의항목은 닉네임만, Android 패키지 `kr.mashil.mashil` + 키 해시, iOS 번들 ID.
+docs/AUTH.md §1. 콘솔에서 카카오 로그인·OIDC ON, 동의항목은 닉네임만, Android 패키지 `dev.ironhiro.mashil` + 키 해시, iOS 번들 ID.
 
 ```bash
 for app in mashil-api-dev mashil-api; do
@@ -58,7 +58,7 @@ docs/AUTH.md §3. iOS 로 다른 소셜 로그인을 내면 Sign in with Apple �
 ```bash
 for app in mashil-api-dev mashil-api; do
   az containerapp update -g rg-mashil -n $app --set-env-vars \
-    "OAuth__Apple__ClientIds__0=kr.mashil.mashil" "OAuth__Apple__TeamId=<Team ID>" "OAuth__Apple__KeyId=<Key ID>"
+    "OAuth__Apple__ClientIds__0=dev.ironhiro.mashil" "OAuth__Apple__TeamId=<Team ID>" "OAuth__Apple__KeyId=<Key ID>"
   az containerapp secret set -g rg-mashil -n $app --secrets \
     "apple-private-key=<.p8 내용>" "oauth-token-key=$(openssl rand -base64 32)"
   az containerapp update -g rg-mashil -n $app --set-env-vars \

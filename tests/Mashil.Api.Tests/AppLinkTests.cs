@@ -45,7 +45,7 @@ public class AppLinkTests
         Assert.Equal("delegate_permission/common.handle_all_urls", e.GetProperty("relation")[0].GetString());
         var t = e.GetProperty("target");
         Assert.Equal("android_app", t.GetProperty("namespace").GetString());
-        Assert.Equal("kr.mashil.mashil", t.GetProperty("package_name").GetString());
+        Assert.Equal("dev.ironhiro.mashil", t.GetProperty("package_name").GetString());
         var prints = t.GetProperty("sha256_cert_fingerprints");
         Assert.Equal(1, prints.GetArrayLength()); // 대소문자만 다른 중복은 하나로
         Assert.Equal(Print.ToUpperInvariant(), prints[0].GetString());
@@ -54,13 +54,13 @@ public class AppLinkTests
     [Fact]
     public async Task Apple_association_only_claims_toilet_paths()
     {
-        using var c = await StartAsync(new() { ["App:Links:AppleAppIds:0"] = "ABCDE12345.kr.mashil.mashil" });
+        using var c = await StartAsync(new() { ["App:Links:AppleAppIds:0"] = "ABCDE12345.dev.ironhiro.mashil" });
         var res = await c.GetAsync("/.well-known/apple-app-site-association");
         Assert.Equal(HttpStatusCode.OK, res.StatusCode);
         Assert.Equal("application/json", res.Content.Headers.ContentType?.MediaType);
         using var doc = JsonDocument.Parse(await res.Content.ReadAsStringAsync());
         var d = doc.RootElement.GetProperty("applinks").GetProperty("details")[0];
-        Assert.Equal("ABCDE12345.kr.mashil.mashil", d.GetProperty("appIDs")[0].GetString());
+        Assert.Equal("ABCDE12345.dev.ironhiro.mashil", d.GetProperty("appIDs")[0].GetString());
         Assert.Equal("/toilets/*", d.GetProperty("components")[0].GetProperty("/").GetString());
     }
 }

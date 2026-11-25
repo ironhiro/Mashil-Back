@@ -6,12 +6,12 @@ namespace Mashil.Api.Endpoints;
 public sealed class AppLinkOptions
 {
     /// <summary>Android 패키지 이름.</summary>
-    public string AndroidPackage { get; set; } = "kr.mashil.mashil";
+    public string AndroidPackage { get; set; } = "dev.ironhiro.mashil";
 
     /// <summary>앱 서명 인증서 SHA-256 지문들 ("AB:CD:…"). Play 앱 서명 키와 업로드 키, 필요하면 디버그 키.</summary>
     public List<string> AndroidSha256 { get; set; } = [];
 
-    /// <summary>iOS 앱 ID들 ("{Team ID}.kr.mashil.mashil").</summary>
+    /// <summary>iOS 앱 ID들 ("{Team ID}.dev.ironhiro.mashil").</summary>
     public List<string> AppleAppIds { get; set; } = [];
 }
 
