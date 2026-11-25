@@ -26,7 +26,7 @@ az containerapp update -g rg-mashil -n mashil-api-dev --set-env-vars \
   "App__Links__AndroidSha256__0=<디버그 키 SHA-256>"
 
 # iOS: {Team ID}.{번들 ID}
-az containerapp update -g rg-mashil -n mashil-api --set-env-vars "App__Links__AppleAppIds__0=<Team ID>.kr.mashil.mashil"
+az containerapp update -g rg-mashil -n mashil-api --set-env-vars "App__Links__AppleAppIds__0=<Team ID>.dev.ironhiro.mashil"
 ```
 
 디버그 키 지문: `keytool -list -v -keystore ~/.android/debug.keystore -storepass android -alias androiddebugkey` 의 `SHA256:` 줄
@@ -44,8 +44,8 @@ open "https://digitalassetlinks.googleapis.com/v1/statements:list?source.web.sit
 ## 앱에서 시험 (Android)
 
 ```bash
-adb shell pm verify-app-links --re-verify kr.mashil.mashil
-adb shell pm get-app-links kr.mashil.mashil          # toilets-dev.ironhiro.dev: verified
+adb shell pm verify-app-links --re-verify dev.ironhiro.mashil
+adb shell pm get-app-links dev.ironhiro.mashil          # toilets-dev.ironhiro.dev: verified
 adb shell am start -a android.intent.action.VIEW -d "https://toilets-dev.ironhiro.dev/toilets/1"
 ```
 
@@ -53,7 +53,7 @@ adb shell am start -a android.intent.action.VIEW -d "https://toilets-dev.ironhir
 
 ## iOS (남은 일)
 
-1. Apple Developer → Identifiers → `kr.mashil.mashil` → **Associated Domains** 켜기, 프로비저닝 프로필 갱신
+1. Apple Developer → Identifiers → `dev.ironhiro.mashil` → **Associated Domains** 켜기, 프로비저닝 프로필 갱신
 2. Xcode → Runner → Signing & Capabilities → Associated Domains: `applinks:toilets.ironhiro.dev` (staging 은 `applinks:toilets-dev.ironhiro.dev`)
 3. 서버 `App__Links__AppleAppIds__0` 설정
 
