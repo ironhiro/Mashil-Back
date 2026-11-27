@@ -144,7 +144,7 @@ dotnet run --project tools/Mashil.CsvImport -- --geocode=200                # �
 
 ## 컨테이너 / 운영 배포
 
-설계는 `Mashil-app/docs/08-infrastructure.md`. **서버 준비·배포·롤백·백업·감시·점검 모드 절차는 [docs/OPERATIONS.md](docs/OPERATIONS.md).** 파일:
+설계는 `Mashil-app/docs/08-infrastructure.md`. **운영(Azure)의 리소스·설정·배포는 [docs/AZURE.md](docs/AZURE.md), 운영 승격은 [docs/RELEASE.md](docs/RELEASE.md).** 아래 `deploy/` 파일과 [docs/OPERATIONS.md](docs/OPERATIONS.md)는 VM 1대 구성용으로 남겨 둔 것이다. 파일:
 
 | 파일 | 내용 |
 |---|---|
