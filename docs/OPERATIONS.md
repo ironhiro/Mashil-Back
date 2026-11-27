@@ -1,6 +1,8 @@
-# 마실 운영 런북
+# 마실 운영 런북 (VM 구성용)
 
-설계는 `Mashil-app/docs/05-operations.md`(무중단 배포·점검 모드), `08-infrastructure.md`(구성·백업·감시). 이 문서는 그 설계를 이 저장소의 파일로 실제로 돌리는 절차다. 아직 운영 서버는 없다 (호스팅은 미결 Q11).
+> **운영은 이 문서가 아니라 [AZURE.md](AZURE.md)** (Azure Container Apps + PostgreSQL Flexible Server, 2026-11 부터). 운영 승격은 [RELEASE.md](RELEASE.md). 이 문서와 `deploy/` 는 VM 1대 + Docker Compose 로 옮길 일이 생길 때를 위해 남겨 둔 것이다.
+
+설계는 `Mashil-app/docs/05-operations.md`(무중단 배포·점검 모드), `08-infrastructure.md`(구성·백업·감시). 이 문서는 VM 설계를 이 저장소의 파일로 돌리는 절차다.
 
 | 구성 | 파일 |
 |---|---|
