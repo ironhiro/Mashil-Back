@@ -13,7 +13,27 @@ namespace Mashil.Import;
 /// </summary>
 public static class DuplicateMarker
 {
+    /// <summary>
+    /// 중복 계산 UPDATE 의 명령 제한. 5만여 행 전체에 창 함수를 돌려서, 운영·개발 Worker 가 같은 DB 서버(B1ms, vCPU 1)에서
+    /// 겹치면 기본 30초를 넘긴다 (2026-11-20·25 운영, 11-27 개발 일일 갱신 실패: 30.15초에 끊김).
+    /// </summary>
+    public static TimeSpan CommandTimeout { get; set; } = TimeSpan.FromSeconds(120);
+
     public static async Task<int> MarkAsync(MashilDbContext db, CancellationToken ct = default)
+    {
+        var previous = db.Database.GetCommandTimeout();
+        db.Database.SetCommandTimeout(CommandTimeout);
+        try
+        {
+            return await MarkCoreAsync(db, ct);
+        }
+        finally
+        {
+            db.Database.SetCommandTimeout(previous);
+        }
+    }
+
+    private static async Task<int> MarkCoreAsync(MashilDbContext db, CancellationToken ct)
     {
         await db.Database.ExecuteSqlRawAsync("""
             WITH v AS (
