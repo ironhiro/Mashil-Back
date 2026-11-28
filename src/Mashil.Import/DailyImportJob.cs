@@ -23,7 +23,11 @@ public sealed class DailyImportJob(
 
     private readonly TimeProvider _clock = clock ?? TimeProvider.System;
 
-    public async Task<ImportRun?> ExecuteOnceAsync(string sourceCode, ImportTrigger trigger, CancellationToken ct)
+    /// <summary>
+    /// 한 번 실행한다. 다운로드 실패는 Failed 실행으로 기록하고, 이미 실행 중이면 null.
+    /// <paramref name="notifyFailure"/> 가 false 면 실패 알림 대신 경고 로그만 남긴다 (호스트가 곧 다시 시도할 때).
+    /// </summary>
+    public async Task<ImportRun?> ExecuteOnceAsync(string sourceCode, ImportTrigger trigger, CancellationToken ct, bool notifyFailure = true)
     {
         var source = await db.DataSources.AsNoTracking().SingleAsync(s => s.Code == sourceCode, ct);
 
@@ -37,8 +41,11 @@ public sealed class DailyImportJob(
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             var run = await RecordFetchFailureAsync(source.Id, trigger, ex, ct);
-            await alerts.NotifyAsync(AlertLevel.Error, "공중화장실 데이터 다운로드 실패",
-                $"{ex.Message}\n기존 데이터를 유지합니다. 관리자 화면에서 파일을 직접 올려 처리할 수 있습니다.", ct);
+            if (notifyFailure)
+                await alerts.NotifyAsync(AlertLevel.Error, "공중화장실 데이터 다운로드 실패",
+                    $"{ex.Message}\n기존 데이터를 유지합니다. 관리자 화면에서 파일을 직접 올려 처리할 수 있습니다.", ct);
+            else
+                logger.LogWarning("다운로드 실패, 다시 시도 예정: {Message}", ex.Message);
             await CheckStalenessAsync(source.Id, ct);
             return run;
         }
@@ -54,7 +61,10 @@ public sealed class DailyImportJob(
             return null;
         }
 
-        await NotifyResultAsync(result, ct);
+        if (result.Status == ImportRunStatus.Failed && !notifyFailure)
+            logger.LogWarning("임포트 실패, 다시 시도 예정: run #{Id} {Message}", result.Id, result.Message);
+        else
+            await NotifyResultAsync(result, ct);
         await CheckStalenessAsync(source.Id, ct);
         return result;
     }
