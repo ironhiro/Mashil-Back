@@ -93,6 +93,15 @@ az containerapp update -g rg-mashil -n mashil-worker --set-env-vars "Kakao__Rest
 - 처음 5만여 곳은 초당 약 2.5건으로 6시간쯤 걸린다. 하루 예산은 `Geocode:DailyBudget`(80,000) — 카카오 무료 한도(100,000)를
   운영·개발이 나눠 쓰므로 개발은 운영이 끝난 뒤에 돌린다. 개발 DB 에 운영의 `geocode_cache` 를 복사해 두면 API 를 거의 부르지 않는다.
 
+### 일일 갱신 시각 — 운영·개발을 겹치지 않게
+
+운영·개발 DB 가 한 서버(B1ms, vCPU 1)에 있어서 두 Worker 의 일일 갱신이 같은 시각이면 서로 느려진다
+(2026-11-20·25·27, 중복 계산 쿼리가 30초 제한에 걸려 한쪽이 실패). 운영은 기본값 04:30, **개발은 05:30**:
+
+```bash
+az containerapp update -g rg-mashil -n mashil-worker-dev --set-env-vars "Import__Schedule__TimeKst=05:30" -o none
+```
+
 #### 브이월드 (선택) — 카카오가 못 찾은 주소
 
 카카오가 못 찾은 주소만 같은 질의로 브이월드(국토부 정부 주소 DB, Geocoder API 2.0)에 묻는다(`VWorld:ApiKey`).
